@@ -95,6 +95,8 @@ function baseUrl() {
 }
 
 // Initialize architecture helper
+require_once __DIR__ . '/app/Database.php';
+require_once __DIR__ . '/app/PackageRepository.php';
 require_once __DIR__ . '/app/ArchitectureHelper.php';
 $db = Database::getInstance();
 $repo = new PackageRepository($db);
