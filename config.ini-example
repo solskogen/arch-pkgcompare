@@ -1,0 +1,96 @@
+# Arch Linux Package Reporting - Configuration
+# 
+# This file contains all configuration for the data loader and reporting system.
+# Modify these settings to point to different repositories or adjust behavior.
+# 
+# ARCHITECTURE CONFIGURATION:
+# You can compare ANY architectures by defining [arch-*] sections.
+# Use elegant URL templates with {repo} and {arch} placeholders:
+#
+# Examples:
+#   [arch-aarch64]     - Arch Linux ARM 64-bit
+#   [arch-riscv]       - RISC-V architecture  
+#   [arch-x86_64]      - Intel/AMD 64-bit
+#   [arch-s390x]       - IBM System z
+#   [arch-powerpc]     - PowerPC
+#   [arch-sparc]       - SPARC
+#
+# Template Variables:
+#   {repo}             - Repository name (core, extra, testing, forge, etc.)
+#   {arch}             - Architecture name (aarch64, x86_64, riscv64, etc.)
+#
+# Example:
+#   [arch-riscv64]
+#   mirror = https://mirror.example.com
+#   url_template = {mirror}/{repo}/os/{arch}/{repo}.db
+#   repos = core, extra, testing
+#
+#   Expands to:
+#     core = https://mirror.example.com/core/os/riscv64/core.db
+#     extra = https://mirror.example.com/extra/os/riscv64/extra.db
+#     testing = https://mirror.example.com/testing/os/riscv64/testing.db
+
+[database]
+# MySQL/MariaDB database connection settings
+host = localhost
+user = aarch64linux
+password = aarch64linux
+database = aarch64linux
+
+[arch-aarch64]
+# Arch Linux ARM 64-bit repositories
+mirror = https://arch-linux-repo.drzee.net
+url_template = {mirror}/arch/{repo}/os/{arch}/{repo}.db
+repos = core, extra, forge
+
+[arch-x86_64]
+# Arch Linux upstream (Intel/AMD 64-bit) repositories
+mirror = https://geo.mirror.pkgbuild.com
+url_template = {mirror}/{repo}/os/{arch}/{repo}.db
+repos = core, extra
+
+[loader]
+# Data loader settings
+batch_size = 5000
+# Number of records to insert in each batch operation
+# Larger batches = faster, but uses more memory
+# Recommended: 1000-10000
+
+parallel_downloads = 5
+# Number of simultaneous downloads
+# Recommended: 3-10 depending on network bandwidth
+
+timeout = 30
+# Download timeout in seconds per request
+
+[cache]
+# Reporting application cache settings
+# These are used by the PHP reporting application
+
+enabled = true
+# Enable/disable caching system
+
+ttl = 3600
+# Cache time-to-live in seconds (1 hour = 3600)
+# Set to 0 to disable caching
+
+directory = cache
+# Cache storage directory (relative to reporting/)
+# Must be writable by web server
+
+[logging]
+# Logging configuration for the loader script
+
+level = INFO
+# Log level: DEBUG, INFO, WARNING, ERROR
+# DEBUG = very verbose (for troubleshooting)
+# INFO = normal operation
+# WARNING = warnings and errors only
+# ERROR = errors only
+
+file = load_arch_packages.log
+# Log file name (relative to project root)
+# Leave empty to disable file logging
+
+console = true
+# Enable console output while running

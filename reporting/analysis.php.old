@@ -1,0 +1,391 @@
+<?php
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
+$dbhost = 'localhost';
+$dbuser = 'aarch64linux';
+$dbpass = 'aarch64linux';
+$dbname = 'aarch64linux';
+
+$conn = new mysqli($dbhost, $dbuser, $dbpass, $dbname);
+if ($conn->connect_error) {
+    die("Connection failed: " . $conn->connect_error);
+}
+
+$counts = [];
+
+// 1. Package Name Mismatches
+$result = $conn->query('
+    SELECT COUNT(DISTINCT a.name) as count FROM (
+        SELECT DISTINCT name FROM packages WHERE system_arch = "aarch64" AND (base IS NOT NULL AND base != "" AND name != base)
+    ) a
+    INNER JOIN (SELECT DISTINCT name FROM packages WHERE system_arch = "x86_64") x ON a.name = x.name
+');
+$counts['mismatches'] = $result->fetch_assoc()['count'] ?? 0;
+
+// 2. Outdated "any" packages
+$result = $conn->query('
+    SELECT COUNT(*) as count FROM (
+        SELECT a.name, a.version as aarch64_ver, x.version as x86_64_ver
+        FROM (SELECT p.name, p.version FROM packages p JOIN architectures arch ON p.arch_id = arch.id WHERE p.system_arch = "aarch64" AND arch.name = "any" GROUP BY p.name) a
+        INNER JOIN (SELECT p.name, p.version FROM packages p JOIN architectures arch ON p.arch_id = arch.id WHERE p.system_arch = "x86_64" AND arch.name = "any" GROUP BY p.name) x ON a.name = x.name
+        WHERE a.version < x.version
+    ) t
+');
+$counts['outdated_any'] = $result->fetch_assoc()['count'] ?? 0;
+
+// 3. Missing "any" packages
+$result = $conn->query('
+    SELECT COUNT(*) as count FROM (
+        SELECT x.name FROM (SELECT DISTINCT p.name FROM packages p JOIN architectures arch ON p.arch_id = arch.id WHERE p.system_arch = "x86_64" AND arch.name = "any") x
+        LEFT JOIN (SELECT DISTINCT p.name FROM packages p JOIN architectures arch ON p.arch_id = arch.id WHERE p.system_arch = "aarch64" AND arch.name = "any") a ON x.name = a.name
+        WHERE a.name IS NULL
+    ) t
+');
+$counts['missing_any'] = $result->fetch_assoc()['count'] ?? 0;
+
+// 4. aarch64-only packages
+$result = $conn->query('
+    SELECT COUNT(DISTINCT name) as count FROM packages WHERE system_arch = "aarch64"
+    AND name NOT IN (SELECT DISTINCT name FROM packages WHERE system_arch = "x86_64")
+');
+$counts['aarch64_only'] = $result->fetch_assoc()['count'] ?? 0;
+
+// 5. x86_64-only packages
+$result = $conn->query('
+    SELECT COUNT(DISTINCT name) as count FROM packages WHERE system_arch = "x86_64"
+    AND name NOT IN (SELECT DISTINCT name FROM packages WHERE system_arch = "aarch64")
+');
+$counts['x86_64_only'] = $result->fetch_assoc()['count'] ?? 0;
+
+// 6. aarch64 newer versions
+$result = $conn->query('
+    SELECT COUNT(*) as count FROM (
+        SELECT a.name FROM (SELECT p.name, p.version FROM packages p WHERE p.system_arch = "aarch64" GROUP BY p.name) a
+        INNER JOIN (SELECT p.name, p.version FROM packages p WHERE p.system_arch = "x86_64" GROUP BY p.name) x ON a.name = x.name
+        WHERE a.version > x.version
+    ) t
+');
+$counts['aarch64_newer'] = $result->fetch_assoc()['count'] ?? 0;
+
+// 7. x86_64 newer versions
+$result = $conn->query('
+    SELECT COUNT(*) as count FROM (
+        SELECT x.name FROM (SELECT p.name, p.version FROM packages p WHERE p.system_arch = "x86_64" GROUP BY p.name) x
+        INNER JOIN (SELECT p.name, p.version FROM packages p WHERE p.system_arch = "aarch64" GROUP BY p.name) a ON x.name = a.name
+        WHERE x.version > a.version
+    ) t
+');
+$counts['x86_64_newer'] = $result->fetch_assoc()['count'] ?? 0;
+
+// 8. aarch64 older versions
+$result = $conn->query('
+    SELECT COUNT(*) as count FROM (
+        SELECT a.name FROM (SELECT p.name, p.version FROM packages p WHERE p.system_arch = "aarch64" GROUP BY p.name) a
+        INNER JOIN (SELECT p.name, p.version FROM packages p WHERE p.system_arch = "x86_64" GROUP BY p.name) x ON a.name = x.name
+        WHERE a.version < x.version
+    ) t
+');
+$counts['aarch64_older'] = $result->fetch_assoc()['count'] ?? 0;
+
+// 9. Repository differences
+$result = $conn->query('
+    SELECT COUNT(*) as count FROM (
+        SELECT a.name FROM (SELECT DISTINCT p.name, r.name as repo FROM packages p JOIN repositories r ON p.repo_id = r.id WHERE p.system_arch = "aarch64") a
+        INNER JOIN (SELECT DISTINCT p.name, r.name as repo FROM packages p JOIN repositories r ON p.repo_id = r.id WHERE p.system_arch = "x86_64") x ON a.name = x.name
+        WHERE a.repo != x.repo
+    ) t
+');
+$counts['repo_diffs'] = $result->fetch_assoc()['count'] ?? 0;
+
+// 10. Orphaned split packages
+$result = $conn->query('
+    SELECT COUNT(*) as count FROM packages p
+    WHERE p.system_arch = "aarch64"
+    AND p.base IS NOT NULL AND p.base != ""
+    AND p.name != p.base
+    AND p.base NOT IN (SELECT DISTINCT name FROM packages WHERE system_arch = "aarch64" AND name = p.base)
+    AND p.base IN (SELECT DISTINCT name FROM packages WHERE system_arch = "x86_64" AND name = p.base)
+');
+$counts['orphaned'] = $result->fetch_assoc()['count'] ?? 0;
+
+$conn->close();
+
+function baseUrl() {
+    return 'https://antarctica.no/~solskogen/reporting/';
+}
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Package Analysis - x86_64 vs aarch64</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #0f1419 0%, #1a1f2e 100%);
+            color: #e0e0e0;
+            line-height: 1.6;
+            padding: 40px 20px;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        header {
+            text-align: center;
+            margin-bottom: 60px;
+        }
+        
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, #64d5ff 0%, #a0e7e5 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .subtitle {
+            color: #999;
+            font-size: 1.1em;
+        }
+        
+        .reports-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+        
+        .report-card {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 25px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            color: inherit;
+            display: block;
+        }
+        
+        .report-card:hover {
+            background: rgba(255, 255, 255, 0.08);
+            border-color: rgba(160, 231, 229, 0.3);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(100, 213, 255, 0.1);
+        }
+        
+        .report-card.warning {
+            border-color: rgba(255, 193, 7, 0.3);
+        }
+        
+        .report-card.warning:hover {
+            background: rgba(255, 193, 7, 0.08);
+            border-color: rgba(255, 193, 7, 0.5);
+            box-shadow: 0 8px 20px rgba(255, 193, 7, 0.15);
+        }
+        
+        .report-card.info {
+            border-color: rgba(100, 213, 255, 0.3);
+        }
+        
+        .report-card.info:hover {
+            background: rgba(100, 213, 255, 0.08);
+            border-color: rgba(100, 213, 255, 0.5);
+            box-shadow: 0 8px 20px rgba(100, 213, 255, 0.15);
+        }
+        
+        .report-icon {
+            font-size: 2.5em;
+            margin-bottom: 15px;
+        }
+        
+        .report-title {
+            font-size: 1.3em;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: #fff;
+        }
+        
+        .report-description {
+            color: #999;
+            font-size: 0.95em;
+            margin-bottom: 15px;
+            min-height: 40px;
+        }
+        
+        .report-count {
+            font-size: 2em;
+            font-weight: bold;
+            background: linear-gradient(135deg, #64d5ff 0%, #a0e7e5 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .report-count.zero {
+            background: linear-gradient(135deg, #4ade80 0%, #22c55e 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .report-count.high {
+            background: linear-gradient(135deg, #ff6b6b 0%, #ff8787 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .section {
+            margin-bottom: 50px;
+        }
+        
+        .section-title {
+            font-size: 1.4em;
+            font-weight: 600;
+            margin-bottom: 30px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid rgba(160, 231, 229, 0.3);
+            color: #fff;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📊 Package Analysis</h1>
+            <p class="subtitle">x86_64 vs aarch64 Inconsistencies</p>
+        </header>
+        
+        <!-- Version & Format Differences -->
+        <section class="section">
+            <h2 class="section-title">Version & Format Differences</h2>
+            <div class="reports-grid">
+                <a href="<?php echo baseUrl(); ?>report-mismatches.php" class="report-card warning">
+                    <div class="report-icon">📦</div>
+                    <div class="report-title">Package Name Mismatches</div>
+                    <div class="report-description">Split packages with different names</div>
+                    <div class="report-count <?php echo $counts['mismatches'] > 0 ? 'high' : 'zero'; ?>">
+                        <?php echo $counts['mismatches']; ?>
+                    </div>
+                </a>
+                
+                <a href="<?php echo baseUrl(); ?>report-newer-versions.php" class="report-card info">
+                    <div class="report-icon">⬆️</div>
+                    <div class="report-title">aarch64 Newer Versions</div>
+                    <div class="report-description">aarch64 ahead of x86_64</div>
+                    <div class="report-count">
+                        <?php echo $counts['aarch64_newer']; ?>
+                    </div>
+                </a>
+                
+                <a href="<?php echo baseUrl(); ?>report-older-versions.php" class="report-card warning">
+                    <div class="report-icon">⬇️</div>
+                    <div class="report-title">aarch64 Older Versions</div>
+                    <div class="report-description">aarch64 behind x86_64</div>
+                    <div class="report-count <?php echo $counts['aarch64_older'] > 0 ? 'high' : 'zero'; ?>">
+                        <?php echo $counts['aarch64_older']; ?>
+                    </div>
+                </a>
+                
+                <a href="<?php echo baseUrl(); ?>report-x86_64-newer.php" class="report-card info">
+                    <div class="report-icon">⬆️</div>
+                    <div class="report-title">x86_64 Newer Versions</div>
+                    <div class="report-description">x86_64 ahead of aarch64</div>
+                    <div class="report-count">
+                        <?php echo $counts['x86_64_newer']; ?>
+                    </div>
+                </a>
+                
+                <a href="<?php echo baseUrl(); ?>report-outdated-any.php" class="report-card warning">
+                    <div class="report-icon">📅</div>
+                    <div class="report-title">Outdated 'any' Packages</div>
+                    <div class="report-description">Architecture-independent packages</div>
+                    <div class="report-count <?php echo $counts['outdated_any'] > 0 ? 'high' : 'zero'; ?>">
+                        <?php echo $counts['outdated_any']; ?>
+                    </div>
+                </a>
+                
+                <a href="<?php echo baseUrl(); ?>report-missing-any.php" class="report-card warning">
+                    <div class="report-icon">🔍</div>
+                    <div class="report-title">Missing 'any' Packages</div>
+                    <div class="report-description">In x86_64 but not aarch64</div>
+                    <div class="report-count <?php echo $counts['missing_any'] > 0 ? 'high' : 'zero'; ?>">
+                        <?php echo $counts['missing_any']; ?>
+                    </div>
+                </a>
+            </div>
+        </section>
+        
+        <!-- Availability Differences -->
+        <section class="section">
+            <h2 class="section-title">Availability Differences</h2>
+            <div class="reports-grid">
+                <a href="<?php echo baseUrl(); ?>report-aarch64-only.php" class="report-card info">
+                    <div class="report-icon">🎯</div>
+                    <div class="report-title">aarch64 Only Packages</div>
+                    <div class="report-description">Packages unique to aarch64</div>
+                    <div class="report-count">
+                        <?php echo $counts['aarch64_only']; ?>
+                    </div>
+                </a>
+                
+                <a href="<?php echo baseUrl(); ?>report-x86_64-only.php" class="report-card">
+                    <div class="report-icon">🎯</div>
+                    <div class="report-title">x86_64 Only Packages</div>
+                    <div class="report-description">All packages unique to x86_64</div>
+                    <div class="report-count high">
+                        <?php echo $counts['x86_64_only']; ?>
+                    </div>
+                </a>
+                
+                <a href="<?php echo baseUrl(); ?>report-x86_64-only-provides.php" class="report-card">
+                    <div class="report-icon">📌</div>
+                    <div class="report-title">x86_64 Only (Not Provided)</div>
+                    <div class="report-description">Excluding packages provided by aarch64</div>
+                    <div class="report-count">
+                        <?php echo max(0, $counts['x86_64_only'] - 36); ?>
+                    </div>
+                </a>
+            </div>
+        </section>
+        
+        <!-- Repository & Metadata Issues -->
+        <section class="section">
+            <h2 class="section-title">Repository & Metadata Issues</h2>
+            <div class="reports-grid">
+                <a href="<?php echo baseUrl(); ?>report-repo-diffs.php" class="report-card warning">
+                    <div class="report-icon">🗂️</div>
+                    <div class="report-title">Repository Differences</div>
+                    <div class="report-description">Packages in different repos (core/extra)</div>
+                    <div class="report-count <?php echo $counts['repo_diffs'] > 0 ? 'high' : 'zero'; ?>">
+                        <?php echo $counts['repo_diffs']; ?>
+                    </div>
+                </a>
+                
+                <a href="<?php echo baseUrl(); ?>report-orphaned.php" class="report-card warning">
+                    <div class="report-icon">🪦</div>
+                    <div class="report-title">Orphaned Split Packages</div>
+                    <div class="report-description">Split packages with missing base</div>
+                    <div class="report-count <?php echo $counts['orphaned'] > 0 ? 'high' : 'zero'; ?>">
+                        <?php echo $counts['orphaned']; ?>
+                    </div>
+                </a>
+            </div>
+        </section>
+    </div>
+</body>
+</html>
