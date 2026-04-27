@@ -63,12 +63,6 @@ Layout::header('Arch Linux Package Reporting');
                     <div class="label">x86_64 Compressed Size</div>
                 </div>
             </a>
-            <a href="<?php echo Formatter::url('report-x86_64-newer.php'); ?>" style="text-decoration: none;">
-                <div class="stat-box">
-                    <div class="value"><?php echo Formatter::number($stats['x86_64_newer_count']); ?></div>
-                    <div class="label">x86_64 Newer</div>
-                </div>
-            </a>
             <a href="<?php echo Formatter::url('report-outdated.php'); ?>" style="text-decoration: none;">
                 <div class="stat-box">
                     <div class="value"><?php echo Formatter::number($stats['outdated_count']); ?></div>
