@@ -69,6 +69,12 @@ Layout::header('Arch Linux Package Reporting');
                     <div class="label">x86_64 Newer</div>
                 </div>
             </a>
+            <a href="<?php echo Formatter::url('report-outdated.php'); ?>" style="text-decoration: none;">
+                <div class="stat-box">
+                    <div class="value"><?php echo Formatter::number($stats['outdated_count']); ?></div>
+                    <div class="label">Outdated Packages</div>
+                </div>
+            </a>
         </div>
     </div>
 
