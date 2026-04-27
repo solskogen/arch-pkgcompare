@@ -72,7 +72,19 @@ Layout::header('Arch Linux Package Reporting');
             <a href="<?php echo Formatter::url('report-outdated.php'); ?>" style="text-decoration: none;">
                 <div class="stat-box">
                     <div class="value"><?php echo Formatter::number($stats['outdated_count']); ?></div>
-                    <div class="label">Outdated Packages</div>
+                    <div class="label">Outdated (all)</div>
+                </div>
+            </a>
+            <a href="<?php echo Formatter::url('report-outdated.php'); ?>" style="text-decoration: none;">
+                <div class="stat-box">
+                    <div class="value"><?php echo Formatter::number($stats['outdated_non_any_count']); ?></div>
+                    <div class="label">Outdated (non-any)</div>
+                </div>
+            </a>
+            <a href="<?php echo Formatter::url('report-outdated-any.php'); ?>" style="text-decoration: none;">
+                <div class="stat-box">
+                    <div class="value"><?php echo Formatter::number($stats['outdated_any_count']); ?></div>
+                    <div class="label">Outdated (-any)</div>
                 </div>
             </a>
         </div>

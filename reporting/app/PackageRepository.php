@@ -445,6 +445,8 @@ class PackageRepository {
             'aarch64_newer_count' => $this->countAarch64Newer(),
             'x86_64_newer_count' => $this->countX86_64Newer(),
             'outdated_count' => $this->countOutdated(),
+            'outdated_non_any_count' => $this->countOutdatedNonAny(),
+            'outdated_any_count' => $this->countOutdatedAny(),
             'license_discrepancies_count' => $this->countLicenseDiscrepancies(),
         ];
     }
@@ -511,6 +513,34 @@ class PackageRepository {
         ")['count'];
         
         return (int)$aarch64_older + (int)$x86_64_older;
+    }
+
+    private function countOutdatedNonAny() {
+        $aarch64_older = $this->db->fetchOne("
+            SELECT COUNT(DISTINCT a.name) as count FROM packages a
+            INNER JOIN architectures arch_a ON a.arch_id = arch_a.id
+            INNER JOIN packages x ON a.name = x.name
+            INNER JOIN architectures arch_x ON x.arch_id = arch_x.id
+            WHERE a.system_arch = 'aarch64' AND x.system_arch = 'x86_64'
+            AND a.version < x.version
+            AND arch_a.name != 'any' AND arch_x.name != 'any'
+        ")['count'];
+        
+        $x86_64_older = $this->db->fetchOne("
+            SELECT COUNT(DISTINCT x.name) as count FROM packages x
+            INNER JOIN architectures arch_x ON x.arch_id = arch_x.id
+            INNER JOIN packages a ON x.name = a.name
+            INNER JOIN architectures arch_a ON a.arch_id = arch_a.id
+            WHERE x.system_arch = 'x86_64' AND a.system_arch = 'aarch64'
+            AND x.version < a.version
+            AND arch_x.name != 'any' AND arch_a.name != 'any'
+        ")['count'];
+        
+        return (int)$aarch64_older + (int)$x86_64_older;
+    }
+
+    private function countOutdatedAny() {
+        return count($this->getOutdatedAnyPackages());
     }
 
     /**
