@@ -7,27 +7,24 @@ try {
     $db = Database::getInstance();
     $repo = new PackageRepository($db);
     
-    // Get packages older in aarch64
-    $aarch64_older = $db->fetchAll("
+    // Get all packages that appear in both architectures
+    $all_packages = $db->fetchAll("
         SELECT DISTINCT 
             a.name, a.version as aarch64_version, x.version as x86_64_version
         FROM packages a
         INNER JOIN packages x ON a.name = x.name
         WHERE a.system_arch = 'aarch64' AND x.system_arch = 'x86_64'
-        AND a.version < x.version
         ORDER BY a.name
     ");
     
-    // Get packages older in x86_64
-    $x86_64_older = $db->fetchAll("
-        SELECT DISTINCT 
-            x.name, x.version as x86_64_version, a.version as aarch64_version
-        FROM packages x
-        INNER JOIN packages a ON x.name = a.name
-        WHERE x.system_arch = 'x86_64' AND a.system_arch = 'aarch64'
-        AND x.version < a.version
-        ORDER BY x.name
-    ");
+    // Filter using PHP version_compare for accurate Semantic Versioning
+    $aarch64_older = array_filter($all_packages, function($pkg) {
+        return version_compare($pkg['aarch64_version'], $pkg['x86_64_version'], '<');
+    });
+    
+    $x86_64_older = array_filter($all_packages, function($pkg) {
+        return version_compare($pkg['x86_64_version'], $pkg['aarch64_version'], '<');
+    });
     
     $total_outdated = count($aarch64_older) + count($x86_64_older);
 } catch (Exception $e) {

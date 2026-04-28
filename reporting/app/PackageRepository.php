@@ -498,45 +498,39 @@ class PackageRepository {
     }
 
     private function countOutdated() {
-        $aarch64_older = $this->db->fetchOne("
-            SELECT COUNT(DISTINCT a.name) as count FROM packages a
+        $all_packages = $this->db->fetchAll("
+            SELECT DISTINCT 
+                a.name, a.version as aarch64_version, x.version as x86_64_version
+            FROM packages a
             INNER JOIN packages x ON a.name = x.name
             WHERE a.system_arch = 'aarch64' AND x.system_arch = 'x86_64'
-            AND a.version < x.version
-        ")['count'];
+        ");
         
-        $x86_64_older = $this->db->fetchOne("
-            SELECT COUNT(DISTINCT x.name) as count FROM packages x
-            INNER JOIN packages a ON x.name = a.name
-            WHERE x.system_arch = 'x86_64' AND a.system_arch = 'aarch64'
-            AND x.version < a.version
-        ")['count'];
+        $outdated = array_filter($all_packages, function($pkg) {
+            // Count if versions differ (either one is older than the other)
+            return version_compare($pkg['aarch64_version'], $pkg['x86_64_version'], '!=');
+        });
         
-        return (int)$aarch64_older + (int)$x86_64_older;
+        return count($outdated);
     }
 
     private function countOutdatedNonAny() {
-        $aarch64_older = $this->db->fetchOne("
-            SELECT COUNT(DISTINCT a.name) as count FROM packages a
+        $all_packages = $this->db->fetchAll("
+            SELECT DISTINCT 
+                a.name, a.version as aarch64_version, x.version as x86_64_version
+            FROM packages a
             INNER JOIN architectures arch_a ON a.arch_id = arch_a.id
             INNER JOIN packages x ON a.name = x.name
             INNER JOIN architectures arch_x ON x.arch_id = arch_x.id
             WHERE a.system_arch = 'aarch64' AND x.system_arch = 'x86_64'
-            AND a.version < x.version
             AND arch_a.name != 'any' AND arch_x.name != 'any'
-        ")['count'];
+        ");
         
-        $x86_64_older = $this->db->fetchOne("
-            SELECT COUNT(DISTINCT x.name) as count FROM packages x
-            INNER JOIN architectures arch_x ON x.arch_id = arch_x.id
-            INNER JOIN packages a ON x.name = a.name
-            INNER JOIN architectures arch_a ON a.arch_id = arch_a.id
-            WHERE x.system_arch = 'x86_64' AND a.system_arch = 'aarch64'
-            AND x.version < a.version
-            AND arch_x.name != 'any' AND arch_a.name != 'any'
-        ")['count'];
+        $outdated = array_filter($all_packages, function($pkg) {
+            return version_compare($pkg['aarch64_version'], $pkg['x86_64_version'], '!=');
+        });
         
-        return (int)$aarch64_older + (int)$x86_64_older;
+        return count($outdated);
     }
 
     private function countOutdatedAny() {
