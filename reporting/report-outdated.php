@@ -43,7 +43,7 @@ Layout::header('All Outdated Packages');
             <div class="alert alert-success">All packages are synchronized! ✓</div>
         <?php else: ?>
             <?php if (!empty($aarch64_older)): ?>
-            <h3 style="margin-top: 20px; margin-bottom: 10px; color: #ffb74d;">aarch64 is older (<?php echo count($aarch64_older); ?>)</h3>
+            <h3 style="margin-top: 20px; margin-bottom: 10px; color: #ffb74d;">x86_64 is newer (<?php echo count($aarch64_older); ?>)</h3>
             <table>
                 <thead>
                     <tr>
@@ -69,7 +69,7 @@ Layout::header('All Outdated Packages');
             <?php endif; ?>
 
             <?php if (!empty($x86_64_older)): ?>
-            <h3 style="margin-top: 20px; margin-bottom: 10px; color: #ffb74d;">x86_64 is older (<?php echo count($x86_64_older); ?>)</h3>
+            <h3 style="margin-top: 20px; margin-bottom: 10px; color: #ffb74d;">aarch64 is newer (<?php echo count($x86_64_older); ?>)</h3>
             <table>
                 <thead>
                     <tr>
