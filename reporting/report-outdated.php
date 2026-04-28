@@ -74,8 +74,8 @@ Layout::header('All Outdated Packages');
                 <thead>
                     <tr>
                         <th>Package Name</th>
-                        <th>x86_64 Version</th>
                         <th>aarch64 Version</th>
+                        <th>x86_64 Version</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -86,8 +86,8 @@ Layout::header('All Outdated Packages');
                                 <?php echo Formatter::escape($pkg['name']); ?>
                             </a>
                         </td>
-                        <td><span class="badge badge-error"><?php echo Formatter::escape($pkg['x86_64_version']); ?></span></td>
                         <td><?php echo Formatter::escape($pkg['aarch64_version']); ?></td>
+                        <td><span class="badge badge-error"><?php echo Formatter::escape($pkg['x86_64_version']); ?></span></td>
                     </tr>
                     <?php endforeach; ?>
                 </tbody>
