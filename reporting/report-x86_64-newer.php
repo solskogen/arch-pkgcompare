@@ -26,8 +26,8 @@ Layout::header('x86_64 Newer Versions');
                 <thead>
                     <tr>
                         <th>Package Name</th>
-                        <th>x86_64 Version</th>
                         <th>aarch64 Version</th>
+                        <th>x86_64 Version</th>
                         <th>Difference</th>
                     </tr>
                 </thead>
@@ -39,8 +39,8 @@ Layout::header('x86_64 Newer Versions');
                                 <?php echo Formatter::escape($pkg['name']); ?>
                             </a>
                         </td>
-                        <td><span class="badge badge-warning"><?php echo Formatter::escape($pkg['x86_64_version']); ?></span></td>
                         <td><?php echo Formatter::escape($pkg['aarch64_version']); ?></td>
+                        <td><span class="badge badge-warning"><?php echo Formatter::escape($pkg['x86_64_version']); ?></span></td>
                         <td><span class="badge badge-warning">newer</span></td>
                     </tr>
                     <?php endforeach; ?>
