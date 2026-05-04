@@ -467,6 +467,11 @@ tbody tr:last-child td {
     font-size: 12px;
 }
 
+.btn-active {
+    background-color: var(--accent-color);
+    color: white;
+}
+
 /* Filters */
 .filters {
     background-color: var(--primary-color);
