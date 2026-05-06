@@ -22,6 +22,11 @@ try {
     $ahead = array_filter($all_packages, function($pkg) {
         return version_compare($pkg['x86_64_version'], $pkg['aarch64_version'], '<');
     });
+    
+    // Also get the count for the "outdated" link
+    $outdated = array_filter($all_packages, function($pkg) {
+        return version_compare($pkg['aarch64_version'], $pkg['x86_64_version'], '<');
+    });
 } catch (Exception $e) {
     die("Error: " . $e->getMessage());
 }
@@ -36,7 +41,7 @@ Layout::header('aarch64 Ahead Packages');
 
         <div style="margin-bottom: 20px;">
             <a href="<?php echo Formatter::url('report-outdated.php'); ?>" style="display: inline-block; padding: 10px 16px; background-color: var(--accent-color); color: white; border-radius: 4px; text-decoration: none; font-weight: 600;">
-                📦 View aarch64 outdated (<?php echo $repo->countOutdatedNonAny(); ?>)
+                📦 View aarch64 outdated (<?php echo count($outdated); ?>)
             </a>
         </div>
 

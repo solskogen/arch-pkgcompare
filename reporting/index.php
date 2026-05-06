@@ -7,6 +7,23 @@ try {
     $db = Database::getInstance();
     $repo = new PackageRepository($db);
     $stats = $repo->getStats();
+    
+    // Calculate counts for outdated and ahead packages
+    $all_packages = $db->fetchAll("
+        SELECT DISTINCT 
+            a.name, a.version as aarch64_version, x.version as x86_64_version
+        FROM packages a
+        INNER JOIN packages x ON a.name = x.name
+        WHERE a.system_arch = 'aarch64' AND x.system_arch = 'x86_64'
+    ");
+    
+    $outdated_count = count(array_filter($all_packages, function($pkg) {
+        return version_compare($pkg['aarch64_version'], $pkg['x86_64_version'], '<');
+    }));
+    
+    $ahead_count = count(array_filter($all_packages, function($pkg) {
+        return version_compare($pkg['x86_64_version'], $pkg['aarch64_version'], '<');
+    }));
 } catch (Exception $e) {
     error_log("Error in index.php: " . $e->getMessage(), 3, "/var/log/reporting.log");
     die("An internal error occurred. Please contact support.");
@@ -65,13 +82,13 @@ Layout::header('Arch Linux Package Reporting');
             </a>
             <a href="<?php echo Formatter::url('report-outdated.php'); ?>" style="text-decoration: none;">
                 <div class="stat-box">
-                    <div class="value"><?php echo Formatter::number($stats['outdated_non_any_count']); ?></div>
+                    <div class="value"><?php echo Formatter::number($outdated_count); ?></div>
                     <div class="label">aarch64 Outdated</div>
                 </div>
             </a>
             <a href="<?php echo Formatter::url('report-aarch64-ahead.php'); ?>" style="text-decoration: none;">
                 <div class="stat-box">
-                    <div class="value"><?php echo Formatter::number($stats['outdated_count'] - $stats['outdated_non_any_count']); ?></div>
+                    <div class="value"><?php echo Formatter::number($ahead_count); ?></div>
                     <div class="label">aarch64 Ahead</div>
                 </div>
             </a>
