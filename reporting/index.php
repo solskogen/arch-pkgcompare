@@ -65,20 +65,20 @@ Layout::header('Arch Linux Package Reporting');
             </a>
             <a href="<?php echo Formatter::url('report-outdated.php'); ?>" style="text-decoration: none;">
                 <div class="stat-box">
-                    <div class="value"><?php echo Formatter::number($stats['outdated_count']); ?></div>
-                    <div class="label">Outdated (all)</div>
+                    <div class="value"><?php echo Formatter::number($stats['outdated_non_any_count']); ?></div>
+                    <div class="label">aarch64 Outdated</div>
                 </div>
             </a>
-            <a href="<?php echo Formatter::url('report-outdated.php'); ?>" style="text-decoration: none;">
+            <a href="<?php echo Formatter::url('report-aarch64-ahead.php'); ?>" style="text-decoration: none;">
                 <div class="stat-box">
-                    <div class="value"><?php echo Formatter::number($stats['outdated_non_any_count']); ?></div>
-                    <div class="label">Outdated (non-any)</div>
+                    <div class="value"><?php echo Formatter::number($stats['outdated_count'] - $stats['outdated_non_any_count']); ?></div>
+                    <div class="label">aarch64 Ahead</div>
                 </div>
             </a>
             <a href="<?php echo Formatter::url('report-outdated-any.php'); ?>" style="text-decoration: none;">
                 <div class="stat-box">
                     <div class="value"><?php echo Formatter::number($stats['outdated_any_count']); ?></div>
-                    <div class="label">Outdated (-any)</div>
+                    <div class="label">-any Outdated</div>
                 </div>
             </a>
         </div>
