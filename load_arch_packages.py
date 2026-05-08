@@ -17,7 +17,7 @@ import gzip
 import io
 import os
 import sys
-import mysql.connector
+import MySQLdb
 import configparser
 from urllib.request import urlopen
 from typing import Dict, List, Optional, Tuple, Set
@@ -44,8 +44,8 @@ except Exception as e:
 MYSQL_CONFIG = {
     'host': os.getenv('DB_HOST', CONFIG.get('database', 'host')),
     'user': os.getenv('DB_USER', CONFIG.get('database', 'user')),
-    'password': os.getenv('DB_PASS', CONFIG.get('database', 'password')),
-    'database': os.getenv('DB_NAME', CONFIG.get('database', 'database')),
+    'passwd': os.getenv('DB_PASS', CONFIG.get('database', 'password')),
+    'db': os.getenv('DB_NAME', CONFIG.get('database', 'database')),
 }
 
 # Repository URLs configuration (dynamically read from [arch-*] sections)
@@ -192,7 +192,9 @@ def download_and_extract_db(url: str, repo_name: str) -> List[Dict]:
 
 def get_connection():
     """Get a fresh database connection."""
-    return mysql.connector.connect(**MYSQL_CONFIG)
+    conn = MySQLdb.connect(**MYSQL_CONFIG)
+    conn.autocommit(False)
+    return conn
 
 
 def bulk_load_ids(cursor) -> Tuple[Dict, Dict, Dict]:
@@ -251,9 +253,19 @@ def ensure_id_exists(cursor, table: str, column: str, value: str, id_map: Dict) 
 
 
 def batch_insert_packages(cursor, packages: List[Dict], system_arch: str, 
-                         repo_map: Dict, arch_map: Dict, license_map: Dict) -> Tuple[int, int]:
+                         repo_map: Dict, arch_map: Dict) -> Tuple[int, int]:
     """Insert packages using batch operations for speed."""
     print(f"[Insert] Starting batch insert of {len(packages)} packages for {system_arch}")
+    
+    # Pre-populate all repo/arch IDs we'll need (avoids per-package ensure_id_exists)
+    unique_repos = {pkg.get('repo', 'unknown') for pkg in packages}
+    unique_archs = {pkg.get('ARCH', 'unknown') for pkg in packages}
+    for name in unique_repos:
+        if name not in repo_map:
+            ensure_id_exists(cursor, 'repositories', 'name', name, repo_map)
+    for name in unique_archs:
+        if name not in arch_map:
+            ensure_id_exists(cursor, 'architectures', 'name', name, arch_map)
     
     inserted = 0
     skipped = 0
@@ -261,16 +273,11 @@ def batch_insert_packages(cursor, packages: List[Dict], system_arch: str,
     
     start_time = time.time()
     
-    for i, pkg in enumerate(packages):
+    for pkg in packages:
         try:
-            # Get or create IDs
-            repo_name = pkg.get('repo', 'unknown')
-            repo_id = ensure_id_exists(cursor, 'repositories', 'name', repo_name, repo_map)
+            repo_id = repo_map.get(pkg.get('repo', 'unknown'))
+            arch_id = arch_map.get(pkg.get('ARCH', 'unknown'))
             
-            pkg_arch = pkg.get('ARCH', 'unknown')
-            arch_id = ensure_id_exists(cursor, 'architectures', 'name', pkg_arch, arch_map)
-            
-            # Build package record for batch
             batch_packages.append((
                 pkg.get('NAME'),
                 pkg.get('BASE'),
@@ -288,7 +295,6 @@ def batch_insert_packages(cursor, packages: List[Dict], system_arch: str,
                 pkg.get('PACKAGER'),
             ))
             
-            # When batch reaches size, insert
             if len(batch_packages) >= BATCH_SIZE:
                 try:
                     cursor.executemany('''
@@ -298,8 +304,7 @@ def batch_insert_packages(cursor, packages: List[Dict], system_arch: str,
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ''', batch_packages)
                     inserted += len(batch_packages)
-                except Exception as batch_error:
-                    # Fall back to one-by-one inserts to find problematic rows
+                except Exception:
                     for single_pkg in batch_packages:
                         try:
                             cursor.execute('''
@@ -313,17 +318,11 @@ def batch_insert_packages(cursor, packages: List[Dict], system_arch: str,
                             print(f"[Skip] Error with package {single_pkg[0]}: {single_error}", file=sys.stderr)
                             skipped += 1
                 batch_packages = []
-                
-                if inserted % (BATCH_SIZE * 5) == 0:
-                    elapsed = time.time() - start_time
-                    rate = inserted / elapsed
-                    print(f"[Insert] {inserted} packages ({rate:.0f} pkg/sec)")
         
         except Exception as e:
             print(f"[Skip] Error with package {pkg.get('NAME')}: {e}", file=sys.stderr)
             skipped += 1
     
-    # Insert remaining batch
     if batch_packages:
         try:
             cursor.executemany('''
@@ -333,8 +332,7 @@ def batch_insert_packages(cursor, packages: List[Dict], system_arch: str,
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ''', batch_packages)
             inserted += len(batch_packages)
-        except Exception as batch_error:
-            # Fall back to one-by-one inserts
+        except Exception:
             for single_pkg in batch_packages:
                 try:
                     cursor.execute('''
@@ -354,20 +352,9 @@ def batch_insert_packages(cursor, packages: List[Dict], system_arch: str,
     return inserted, skipped
 
 
-def batch_insert_licenses(cursor, packages: List[Dict], license_map: Dict, package_id_map: Dict = None) -> None:
-    """Batch insert package licenses - optimized with bulk ID lookup."""
-    print("[License] Processing licenses...")
-    
-    # Use pre-computed map if provided, otherwise compute locally
-    if package_id_map is None:
-        package_names = [(pkg.get('NAME'), pkg.get('_system_arch', 'aarch64')) for pkg in packages]
-        package_id_map = {}
-        if package_names:
-            cursor.execute('SELECT name, system_arch, id FROM packages')
-            for name, arch, pkg_id in cursor.fetchall():
-                package_id_map[(name, arch)] = pkg_id
-    
-    # Collect all unique license names first
+def prepare_license_data(packages: List[Dict], license_map: Dict, package_id_map: Dict) -> Tuple[List[Tuple], List[Tuple]]:
+    """Prepare license data for insertion (pure Python, no DB calls)."""
+    # Collect all unique license names
     all_license_names = set()
     for pkg in packages:
         licenses = pkg.get('LICENSE', [])
@@ -377,281 +364,254 @@ def batch_insert_licenses(cursor, packages: List[Dict], license_map: Dict, packa
             if isinstance(name, str) and name.strip():
                 all_license_names.add(name)
     
-    # Batch insert all new license names at once
-    new_licenses = [n for n in all_license_names if n not in license_map]
-    if new_licenses:
-        cursor.executemany('INSERT IGNORE INTO licenses (name) VALUES (%s)',
-                           [(n,) for n in new_licenses])
+    new_licenses = [(n,) for n in all_license_names if n not in license_map]
+    
+    return all_license_names, new_licenses
+
+
+def insert_licenses_thread(packages: List[Dict], license_map: Dict, package_id_map: Dict) -> None:
+    """Insert licenses using own connection (thread-safe)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        # Collect unique names and batch insert new ones
+        all_license_names = set()
+        for pkg in packages:
+            licenses = pkg.get('LICENSE', [])
+            if isinstance(licenses, str):
+                licenses = [licenses]
+            for name in licenses:
+                if isinstance(name, str) and name.strip():
+                    all_license_names.add(name)
+        
+        new_licenses = [(n,) for n in all_license_names if n not in license_map]
+        if new_licenses:
+            cursor.executemany('INSERT IGNORE INTO licenses (name) VALUES (%s)', new_licenses)
+        
         # Reload all license IDs
+        local_license_map = {}
         cursor.execute('SELECT id, name FROM licenses')
         for lid, lname in cursor.fetchall():
-            license_map[lname] = lid
-    
-    batch = []
-    seen = set()
-    
-    for pkg in packages:
-        pkg_name = pkg.get('NAME')
-        system_arch = pkg.get('_system_arch', 'aarch64')
-        package_id = package_id_map.get((pkg_name, system_arch))
-        if not package_id:
-            continue
+            local_license_map[lname] = lid
         
-        licenses = pkg.get('LICENSE', [])
-        if isinstance(licenses, str):
-            licenses = [licenses]
-        
-        for license_name in licenses:
-            if isinstance(license_name, str) and license_name.strip():
-                license_id = license_map.get(license_name)
-                if not license_id:
-                    continue
-                
-                pair = (package_id, license_id)
-                if pair not in seen:
-                    batch.append(pair)
-                    seen.add(pair)
-    
-    if batch:
-        for i in range(0, len(batch), BATCH_SIZE):
-            chunk = batch[i:i + BATCH_SIZE]
-            try:
-                cursor.executemany(
-                    'INSERT IGNORE INTO package_licenses (package_id, license_id) VALUES (%s, %s)',
-                    chunk
-                )
-            except Exception as e:
-                print(f"WARNING: Failed to insert batch of {len(chunk)} licenses: {e}", file=sys.stderr)
-    
-    print(f"[License] Complete ({len(batch)} entries)")
-
-
-def batch_insert_provides(cursor, packages: List[Dict], package_id_map: Dict = None) -> None:
-    """Batch insert package provides - optimized with pre-computed ID map."""
-    print("[Provides] Processing provides...")
-    
-    if package_id_map is None:
-        package_id_map = {}
-        cursor.execute('SELECT name, system_arch, id FROM packages')
-        for name, arch, pkg_id in cursor.fetchall():
-            package_id_map[(name, arch)] = pkg_id
-    
-    batch = []
-    seen = set()
-    
-    for pkg in packages:
-        pkg_name = pkg.get('NAME')
-        system_arch = pkg.get('_system_arch', 'aarch64')
-        package_id = package_id_map.get((pkg_name, system_arch))
-        if not package_id:
-            continue
-        
-        provides = pkg.get('PROVIDES', [])
-        if isinstance(provides, str):
-            provides = [provides]
-        
-        for provides_name in provides:
-            if isinstance(provides_name, str) and provides_name.strip():
-                pair = (package_id, provides_name)
-                if pair not in seen:
-                    batch.append(pair)
-                    seen.add(pair)
-    
-    if batch:
-        for i in range(0, len(batch), BATCH_SIZE):
-            chunk = batch[i:i + BATCH_SIZE]
-            try:
-                cursor.executemany(
-                    'INSERT IGNORE INTO package_provides (package_id, provides_name) VALUES (%s, %s)',
-                    chunk
-                )
-            except Exception as e:
-                print(f"WARNING: Failed to insert batch of {len(chunk)} provides: {e}", file=sys.stderr)
-    
-    print(f"[Provides] Complete ({len(batch)} entries)")
-
-
-def batch_insert_depends(cursor, packages_by_arch: Dict[str, List[Dict]], package_id_map: Dict = None) -> None:
-    """Batch insert package dependencies - optimized with pre-computed ID map."""
-    print("[Depends] Processing dependencies...")
-    
-    if package_id_map is None:
-        package_id_map = {}
-        cursor.execute('SELECT name, system_arch, id FROM packages')
-        for name, arch, pkg_id in cursor.fetchall():
-            package_id_map[(name, arch)] = pkg_id
-    
-    batch = []
-    seen = set()
-    
-    for system_arch, packages in packages_by_arch.items():
+        batch = []
+        seen = set()
         for pkg in packages:
             pkg_name = pkg.get('NAME')
+            system_arch = pkg.get('_system_arch', 'aarch64')
             package_id = package_id_map.get((pkg_name, system_arch))
             if not package_id:
                 continue
-            
-            depends = pkg.get('DEPENDS', [])
-            if isinstance(depends, str):
-                depends = [depends]
-            
-            for dependency in depends:
-                if isinstance(dependency, str) and dependency.strip():
-                    pair = (package_id, dependency)
+            licenses = pkg.get('LICENSE', [])
+            if isinstance(licenses, str):
+                licenses = [licenses]
+            for license_name in licenses:
+                if isinstance(license_name, str) and license_name.strip():
+                    license_id = local_license_map.get(license_name)
+                    if license_id:
+                        pair = (package_id, license_id)
+                        if pair not in seen:
+                            batch.append(pair)
+                            seen.add(pair)
+        
+        if batch:
+            for i in range(0, len(batch), BATCH_SIZE):
+                cursor.executemany(
+                    'INSERT IGNORE INTO package_licenses (package_id, license_id) VALUES (%s, %s)',
+                    batch[i:i + BATCH_SIZE]
+                )
+        conn.commit()
+        print(f"[License] Complete ({len(batch)} entries)")
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def insert_provides_thread(packages: List[Dict], package_id_map: Dict) -> None:
+    """Insert provides using own connection (thread-safe)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        batch = []
+        seen = set()
+        for pkg in packages:
+            pkg_name = pkg.get('NAME')
+            system_arch = pkg.get('_system_arch', 'aarch64')
+            package_id = package_id_map.get((pkg_name, system_arch))
+            if not package_id:
+                continue
+            provides = pkg.get('PROVIDES', [])
+            if isinstance(provides, str):
+                provides = [provides]
+            for provides_name in provides:
+                if isinstance(provides_name, str) and provides_name.strip():
+                    pair = (package_id, provides_name)
                     if pair not in seen:
                         batch.append(pair)
                         seen.add(pair)
-    
-    if batch:
-        for i in range(0, len(batch), BATCH_SIZE):
-            chunk = batch[i:i + BATCH_SIZE]
-            try:
+        
+        if batch:
+            for i in range(0, len(batch), BATCH_SIZE):
+                cursor.executemany(
+                    'INSERT IGNORE INTO package_provides (package_id, provides_name) VALUES (%s, %s)',
+                    batch[i:i + BATCH_SIZE]
+                )
+        conn.commit()
+        print(f"[Provides] Complete ({len(batch)} entries)")
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def insert_depends_thread(packages_by_arch: Dict[str, List[Dict]], package_id_map: Dict) -> None:
+    """Insert dependencies using own connection (thread-safe)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        batch = []
+        seen = set()
+        for system_arch, packages in packages_by_arch.items():
+            for pkg in packages:
+                pkg_name = pkg.get('NAME')
+                package_id = package_id_map.get((pkg_name, system_arch))
+                if not package_id:
+                    continue
+                depends = pkg.get('DEPENDS', [])
+                if isinstance(depends, str):
+                    depends = [depends]
+                for dependency in depends:
+                    if isinstance(dependency, str) and dependency.strip():
+                        pair = (package_id, dependency)
+                        if pair not in seen:
+                            batch.append(pair)
+                            seen.add(pair)
+        
+        if batch:
+            for i in range(0, len(batch), BATCH_SIZE):
                 cursor.executemany(
                     'INSERT IGNORE INTO package_depends (package_id, dependency) VALUES (%s, %s)',
-                    chunk
+                    batch[i:i + BATCH_SIZE]
                 )
-            except Exception as e:
-                print(f"WARNING: Failed to insert batch of {len(chunk)} dependencies: {e}", file=sys.stderr)
-    
-    print(f"[Depends] Complete ({len(batch)} entries)")
+        conn.commit()
+        print(f"[Depends] Complete ({len(batch)} entries)")
+    finally:
+        cursor.close()
+        conn.close()
 
 
-def batch_insert_groups(cursor, packages: List[Dict], package_id_map: Dict = None) -> None:
-    """Batch insert package groups - optimized with bulk group creation."""
-    print("[Groups] Processing groups...")
-    
-    if package_id_map is None:
-        package_id_map = {}
-        cursor.execute('SELECT name, system_arch, id FROM packages')
-        for name, arch, pkg_id in cursor.fetchall():
-            package_id_map[(name, arch)] = pkg_id
-    
-    # Collect all unique group names first
-    all_group_names = set()
-    for pkg in packages:
-        groups = pkg.get('GROUPS', [])
-        if isinstance(groups, str):
-            groups = [groups]
-        for name in groups:
-            if isinstance(name, str) and name.strip():
-                all_group_names.add(name)
-    
-    # Batch insert all group names and load IDs
-    if all_group_names:
-        cursor.executemany('INSERT IGNORE INTO groups (name) VALUES (%s)',
-                           [(n,) for n in all_group_names])
-    group_cache = {}
-    cursor.execute('SELECT id, name FROM groups')
-    for gid, gname in cursor.fetchall():
-        group_cache[gname] = gid
-    
-    batch = []
-    seen = set()
-    
-    for pkg in packages:
-        pkg_name = pkg.get('NAME')
-        system_arch = pkg.get('_system_arch', 'aarch64')
-        package_id = package_id_map.get((pkg_name, system_arch))
-        if not package_id:
-            continue
+def insert_groups_thread(packages: List[Dict], package_id_map: Dict) -> None:
+    """Insert groups using own connection (thread-safe)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        # Collect and batch-insert all group names
+        all_group_names = set()
+        for pkg in packages:
+            groups = pkg.get('GROUPS', [])
+            if isinstance(groups, str):
+                groups = [groups]
+            for name in groups:
+                if isinstance(name, str) and name.strip():
+                    all_group_names.add(name)
         
-        groups = pkg.get('GROUPS', [])
-        if isinstance(groups, str):
-            groups = [groups]
+        if all_group_names:
+            cursor.executemany('INSERT IGNORE INTO groups (name) VALUES (%s)',
+                               [(n,) for n in all_group_names])
+        group_cache = {}
+        cursor.execute('SELECT id, name FROM groups')
+        for gid, gname in cursor.fetchall():
+            group_cache[gname] = gid
         
-        for group_name in groups:
-            if isinstance(group_name, str) and group_name.strip():
-                group_id = group_cache.get(group_name)
-                if group_id:
-                    pair = (package_id, group_id)
-                    if pair not in seen:
-                        batch.append(pair)
-                        seen.add(pair)
-    
-    if batch:
-        for i in range(0, len(batch), BATCH_SIZE):
-            chunk = batch[i:i + BATCH_SIZE]
-            try:
+        batch = []
+        seen = set()
+        for pkg in packages:
+            pkg_name = pkg.get('NAME')
+            system_arch = pkg.get('_system_arch', 'aarch64')
+            package_id = package_id_map.get((pkg_name, system_arch))
+            if not package_id:
+                continue
+            groups = pkg.get('GROUPS', [])
+            if isinstance(groups, str):
+                groups = [groups]
+            for group_name in groups:
+                if isinstance(group_name, str) and group_name.strip():
+                    group_id = group_cache.get(group_name)
+                    if group_id:
+                        pair = (package_id, group_id)
+                        if pair not in seen:
+                            batch.append(pair)
+                            seen.add(pair)
+        
+        if batch:
+            for i in range(0, len(batch), BATCH_SIZE):
                 cursor.executemany(
                     'INSERT IGNORE INTO package_groups (package_id, group_id) VALUES (%s, %s)',
-                    chunk
+                    batch[i:i + BATCH_SIZE]
                 )
-            except Exception as e:
-                print(f"WARNING: Failed to insert batch of {len(chunk)} group memberships: {e}", file=sys.stderr)
-    
-    print(f"[Groups] Complete ({len(batch)} entries)")
+        conn.commit()
+        print(f"[Groups] Complete ({len(batch)} entries)")
+    finally:
+        cursor.close()
+        conn.close()
 
 
-def batch_insert_optional_deps(cursor, packages: List[Dict], package_id_map: Dict = None) -> None:
-    """Batch insert optional dependencies - optimized with bulk optdep creation."""
-    print("[OptDeps] Processing optional dependencies...")
-    
-    if package_id_map is None:
-        package_id_map = {}
-        cursor.execute('SELECT name, system_arch, id FROM packages')
-        for name, arch, pkg_id in cursor.fetchall():
-            package_id_map[(name, arch)] = pkg_id
-    
-    # Collect all unique optdep names first
-    all_optdep_names = set()
-    for pkg in packages:
-        optdeps = pkg.get('OPTDEPENDS', [])
-        if isinstance(optdeps, str):
-            optdeps = [optdeps]
-        for optdep in optdeps:
-            if isinstance(optdep, str) and optdep.strip():
-                optdep_name = optdep.split(':', 1)[0].strip()
-                if optdep_name:
-                    all_optdep_names.add(optdep_name)
-    
-    # Batch insert all optdep names and load IDs
-    if all_optdep_names:
-        cursor.executemany('INSERT IGNORE INTO optional_deps (name) VALUES (%s)',
-                           [(n,) for n in all_optdep_names])
-    optdep_cache = {}
-    cursor.execute('SELECT id, name FROM optional_deps')
-    for oid, oname in cursor.fetchall():
-        optdep_cache[oname] = oid
-    
-    batch = []
-    seen = set()
-    
-    for pkg in packages:
-        pkg_name = pkg.get('NAME')
-        system_arch = pkg.get('_system_arch', 'aarch64')
-        package_id = package_id_map.get((pkg_name, system_arch))
-        if not package_id:
-            continue
+def insert_optdeps_thread(packages: List[Dict], package_id_map: Dict) -> None:
+    """Insert optional dependencies using own connection (thread-safe)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        # Collect and batch-insert all optdep names
+        all_optdep_names = set()
+        for pkg in packages:
+            optdeps = pkg.get('OPTDEPENDS', [])
+            if isinstance(optdeps, str):
+                optdeps = [optdeps]
+            for optdep in optdeps:
+                if isinstance(optdep, str) and optdep.strip():
+                    all_optdep_names.add(optdep.split(':', 1)[0].strip())
         
-        optdeps = pkg.get('OPTDEPENDS', [])
-        if isinstance(optdeps, str):
-            optdeps = [optdeps]
+        if all_optdep_names:
+            cursor.executemany('INSERT IGNORE INTO optional_deps (name) VALUES (%s)',
+                               [(n,) for n in all_optdep_names])
+        optdep_cache = {}
+        cursor.execute('SELECT id, name FROM optional_deps')
+        for oid, oname in cursor.fetchall():
+            optdep_cache[oname] = oid
         
-        for optdep in optdeps:
-            if isinstance(optdep, str) and optdep.strip():
-                parts = optdep.split(':', 1)
-                optdep_name = parts[0].strip()
-                description = parts[1].strip() if len(parts) > 1 else None
-                
-                optdep_id = optdep_cache.get(optdep_name)
-                if optdep_id:
-                    entry = (package_id, optdep_id, description)
-                    if entry not in seen:
-                        batch.append(entry)
-                        seen.add(entry)
-    
-    if batch:
-        for i in range(0, len(batch), BATCH_SIZE):
-            chunk = batch[i:i + BATCH_SIZE]
-            try:
+        batch = []
+        seen = set()
+        for pkg in packages:
+            pkg_name = pkg.get('NAME')
+            system_arch = pkg.get('_system_arch', 'aarch64')
+            package_id = package_id_map.get((pkg_name, system_arch))
+            if not package_id:
+                continue
+            optdeps = pkg.get('OPTDEPENDS', [])
+            if isinstance(optdeps, str):
+                optdeps = [optdeps]
+            for optdep in optdeps:
+                if isinstance(optdep, str) and optdep.strip():
+                    parts = optdep.split(':', 1)
+                    optdep_name = parts[0].strip()
+                    description = parts[1].strip() if len(parts) > 1 else None
+                    optdep_id = optdep_cache.get(optdep_name)
+                    if optdep_id:
+                        entry = (package_id, optdep_id, description)
+                        if entry not in seen:
+                            batch.append(entry)
+                            seen.add(entry)
+        
+        if batch:
+            for i in range(0, len(batch), BATCH_SIZE):
                 cursor.executemany(
                     'INSERT IGNORE INTO package_optional_deps (package_id, optional_dep_id, description) VALUES (%s, %s, %s)',
-                    chunk
+                    batch[i:i + BATCH_SIZE]
                 )
-            except Exception as e:
-                print(f"WARNING: Failed to insert batch of {len(chunk)} optional deps: {e}", file=sys.stderr)
-    
-    print(f"[OptDeps] Complete ({len(batch)} entries)")
+        conn.commit()
+        print(f"[OptDeps] Complete ({len(batch)} entries)")
+    finally:
+        cursor.close()
+        conn.close()
 
 
 def clear_old_data(cursor) -> None:
@@ -720,7 +680,7 @@ def main():
             print(f"\n[Process] Processing {system_arch.upper()} ({len(packages)} packages)")
             
             inserted, skipped = batch_insert_packages(cursor, packages, system_arch, 
-                                                     repo_map, arch_map, license_map)
+                                                     repo_map, arch_map)
             
             # Add system_arch to each package dict before flattening
             for pkg in packages:
@@ -737,16 +697,20 @@ def main():
         for name, arch, pkg_id in cursor.fetchall():
             package_id_map[(name, arch)] = pkg_id
         
-        # Insert licenses and provides after all packages are inserted
-        print("\n[Relations] Inserting package relationships...")
-        batch_insert_licenses(cursor, all_packages_flat, license_map, package_id_map)
-        batch_insert_provides(cursor, all_packages_flat, package_id_map)
-        batch_insert_depends(cursor, all_packages, package_id_map)
-        batch_insert_groups(cursor, all_packages_flat, package_id_map)
-        batch_insert_optional_deps(cursor, all_packages_flat, package_id_map)
-        
-        # Commit all relationships
-        conn.commit()
+        # Insert all relations in parallel (each uses its own connection)
+        print("\n[Relations] Inserting package relationships (parallel)...")
+        rel_start = time.time()
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = [
+                executor.submit(insert_licenses_thread, all_packages_flat, license_map, package_id_map),
+                executor.submit(insert_provides_thread, all_packages_flat, package_id_map),
+                executor.submit(insert_depends_thread, all_packages, package_id_map),
+                executor.submit(insert_groups_thread, all_packages_flat, package_id_map),
+                executor.submit(insert_optdeps_thread, all_packages_flat, package_id_map),
+            ]
+            for future in as_completed(futures):
+                future.result()  # Raise any exceptions
+        print(f"[Relations] All complete in {time.time() - rel_start:.1f}s")
         
         # Record import timestamp
         cursor.execute(
