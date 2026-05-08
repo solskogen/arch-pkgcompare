@@ -388,11 +388,12 @@ def insert_licenses_thread(packages: List[Dict], license_map: Dict, package_id_m
         if new_licenses:
             cursor.executemany('INSERT IGNORE INTO licenses (name) VALUES (%s)', new_licenses)
         
-        # Reload all license IDs
+        # Reload all license IDs — use case-insensitive keys since MySQL
+        # collation is utf8mb4_unicode_ci (case-insensitive)
         local_license_map = {}
         cursor.execute('SELECT id, name FROM licenses')
         for lid, lname in cursor.fetchall():
-            local_license_map[lname] = lid
+            local_license_map[lname.lower()] = lid
         
         batch = []
         seen = set()
@@ -407,7 +408,7 @@ def insert_licenses_thread(packages: List[Dict], license_map: Dict, package_id_m
                 licenses = [licenses]
             for license_name in licenses:
                 if isinstance(license_name, str) and license_name.strip():
-                    license_id = local_license_map.get(license_name)
+                    license_id = local_license_map.get(license_name.lower())
                     if license_id:
                         pair = (package_id, license_id)
                         if pair not in seen:
@@ -615,16 +616,16 @@ def insert_optdeps_thread(packages: List[Dict], package_id_map: Dict) -> None:
 
 
 def clear_old_data(cursor) -> None:
-    """Clear old package data from database before reloading."""
-    print("[Clean] Clearing old package data...")
+    """Clear all data from database before reloading."""
+    print("[Clean] Wiping all database tables...")
     try:
         cursor.execute('SET FOREIGN_KEY_CHECKS=0')
-        for table in ['package_optional_deps', 'package_groups', 'package_licenses',
-                       'package_relationships', 'package_metrics', 'package_provides',
-                       'package_depends', 'packages', 'import_metadata']:
+        cursor.execute('SHOW TABLES')
+        tables = [row[0] for row in cursor.fetchall()]
+        for table in tables:
             cursor.execute(f'TRUNCATE TABLE {table}')
         cursor.execute('SET FOREIGN_KEY_CHECKS=1')
-        print("[Clean] Old data cleared")
+        print(f"[Clean] Wiped {len(tables)} tables")
     except Exception as e:
         print(f"[Warn] Could not clear old data: {e}")
 
