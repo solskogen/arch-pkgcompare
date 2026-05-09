@@ -326,6 +326,21 @@ def batch_insert_packages(cursor, packages: List[Dict], system_arch: str,
     return inserted, skipped
 
 
+def _insert_arch_packages(packages: List[Dict], system_arch: str,
+                           repo_map: Dict, arch_map: Dict) -> List[Dict]:
+    """Insert packages for one arch using a dedicated connection. Returns the package list."""
+    print(f"\n[Process] Processing {system_arch.upper()} ({len(packages)} packages)")
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        batch_insert_packages(cursor, packages, system_arch, repo_map, arch_map)
+        conn.commit()
+    finally:
+        cursor.close()
+        conn.close()
+    return packages
+
+
 def insert_licenses_thread(packages: List[Dict], license_map: Dict, package_id_map: Dict) -> None:
     """Insert licenses using own connection (thread-safe)."""
     conn = get_connection()
@@ -509,68 +524,78 @@ def clear_old_data(cursor) -> None:
 
 
 def main():
-    """Main execution function with parallel downloads."""
+    """Main execution function."""
     try:
         print("=" * 70)
         print("ARCH LINUX PACKAGE DATABASE LOADER")
         print("=" * 70)
-        
+
         total_start = time.time()
-        
-        # Connect to MySQL
+
+        # Start downloads immediately — they don't need the DB
+        print("[Download] Starting parallel downloads...")
+        future_to_arch: Dict = {}
+        arch_pending: Dict[str, int] = {}
+        arch_packages_dl: Dict[str, List] = {}
+
+        dl_executor = ThreadPoolExecutor(max_workers=PARALLEL_DOWNLOADS)
+        for arch, repos in DB_URLS.items():
+            arch_pending[arch] = len(repos)
+            arch_packages_dl[arch] = []
+            for repo_name, url in repos.items():
+                f = dl_executor.submit(download_and_extract_db, url, repo_name)
+                future_to_arch[f] = arch
+
+        # DB setup runs while downloads are in flight
         print("[DB] Connecting to MySQL database...")
         conn = get_connection()
         cursor = conn.cursor()
-        
-        # Clear old data
         clear_old_data(cursor)
         conn.commit()
-        
-        # Load ID caches
+
         repo_map, arch_map, license_map = bulk_load_ids(cursor)
-        
-        # Download all databases in parallel
-        print("[Download] Starting parallel downloads...")
-        all_packages = {}
-        
-        with ThreadPoolExecutor(max_workers=PARALLEL_DOWNLOADS) as executor:
-            futures = {}
-            for system_arch, repos in DB_URLS.items():
-                for repo_name, url in repos.items():
-                    future = executor.submit(download_and_extract_db, url, repo_name)
-                    futures[future] = (system_arch, repo_name)
-            
-            for future in as_completed(futures):
-                system_arch, repo_name = futures[future]
-                packages = future.result()
-                all_packages.setdefault(system_arch, []).extend(packages)
-        
-        print("[Download] All downloads complete")
-        
-        # Process each architecture
-        all_packages_flat = []
-        for system_arch in sorted(all_packages.keys()):
-            packages = all_packages[system_arch]
-            print(f"\n[Process] Processing {system_arch.upper()} ({len(packages)} packages)")
-            
-            inserted, skipped = batch_insert_packages(cursor, packages, system_arch, 
-                                                     repo_map, arch_map)
-            
-            # Add system_arch to each package dict before flattening
-            for pkg in packages:
-                pkg['_system_arch'] = system_arch
-            all_packages_flat.extend(packages)
-        
-        # Single commit after all packages are inserted
+
+        # Pre-populate all known repos and archs so insert threads never mutate shared maps
+        for arch_name in DB_URLS:
+            ensure_id_exists(cursor, 'architectures', 'name', arch_name, arch_map)
+            for repo_name in DB_URLS[arch_name]:
+                ensure_id_exists(cursor, 'repositories', 'name', repo_name, repo_map)
+        ensure_id_exists(cursor, 'architectures', 'name', 'any', arch_map)
         conn.commit()
-        
+
+        # Pipeline: as each arch finishes downloading, insert it immediately (own connection)
+        all_packages_flat = []
+        with ThreadPoolExecutor(max_workers=len(DB_URLS)) as insert_executor:
+            insert_futures: Dict = {}
+
+            for f in as_completed(future_to_arch):
+                arch = future_to_arch[f]
+                arch_packages_dl[arch].extend(f.result())
+                arch_pending[arch] -= 1
+                if arch_pending[arch] == 0:
+                    pkgs = arch_packages_dl[arch]
+                    for pkg in pkgs:
+                        pkg['_system_arch'] = arch
+                    insert_futures[insert_executor.submit(
+                        _insert_arch_packages, pkgs, arch, repo_map, arch_map
+                    )] = arch
+
+            for f in as_completed(insert_futures):
+                all_packages_flat.extend(f.result())
+
+        dl_executor.shutdown(wait=False)
+        print("[Download] All downloads and inserts complete")
+
+        # Commit to start a fresh transaction that sees all arch-thread commits
+        conn.commit()
+
         # Now pre-compute ALL package ID maps AFTER packages are inserted
         print("[Lookup] Pre-computing package ID maps...")
         package_id_map = {}
         cursor.execute('SELECT name, system_arch, id FROM packages')
         for name, arch, pkg_id in cursor.fetchall():
             package_id_map[(name, arch)] = pkg_id
-        
+
         # Insert all relations in parallel (each uses its own connection)
         print("\n[Relations] Inserting package relationships (parallel)...")
         rel_start = time.time()
@@ -585,38 +610,38 @@ def main():
             for future in as_completed(futures):
                 future.result()  # Raise any exceptions
         print(f"[Relations] All complete in {time.time() - rel_start:.1f}s")
-        
+
         # Record import timestamp
         cursor.execute(
             'INSERT INTO import_metadata (import_timestamp) VALUES (%s)',
             (datetime.now().strftime('%Y-%m-%d %H:%M:%S'),)
         )
         conn.commit()
-        
+
         # Print summary
         cursor.execute('SELECT COUNT(*) FROM packages')
         total = cursor.fetchone()[0]
-        
+
         total_time = time.time() - total_start
-        
+
         print("\n" + "=" * 70)
         print(f"✓ Successfully loaded {total} packages into the database")
         print(f"Total time: {total_time:.1f}s ({total/total_time:.0f} packages/sec)")
         print("=" * 70)
-        
+
         # Print breakdown
         cursor.execute('''
-        SELECT p.system_arch, r.name as repo, COUNT(*) as count 
+        SELECT p.system_arch, r.name as repo, COUNT(*) as count
         FROM packages p
         JOIN repositories r ON p.repo_id = r.id
         GROUP BY p.system_arch, r.id, r.name
         ORDER BY p.system_arch, r.name
         ''')
-        
+
         print("\nPackages by architecture and repository:")
         for system_arch, repo, count in cursor.fetchall():
             print(f"  {system_arch:10} {repo:10} {count:6,} packages")
-        
+
         # Clear the reporting cache since database has been updated
         cache_dir = os.path.join(os.path.dirname(__file__), 'reporting', 'cache')
         if os.path.exists(cache_dir):
@@ -627,10 +652,10 @@ def main():
                 print(f"\n✓ Cleared {len(cache_files)} cache file(s)")
             except Exception as e:
                 print(f"⚠ Warning: Could not clear cache: {e}", file=sys.stderr)
-        
+
         cursor.close()
         conn.close()
-        
+
     except Exception as e:
         print(f"✗ Error: {e}", file=sys.stderr)
         sys.exit(1)
