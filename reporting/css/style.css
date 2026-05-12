@@ -472,6 +472,23 @@ tbody tr:last-child td {
     color: white;
 }
 
+/* Sortable table headers */
+th.sortable {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+}
+th.sortable:hover {
+    color: #fff;
+}
+th.sortable::after {
+    content: ' ⇅';
+    opacity: 0.4;
+    font-size: 11px;
+}
+th.sortable.sort-asc::after  { content: ' ▲'; opacity: 1; }
+th.sortable.sort-desc::after { content: ' ▼'; opacity: 1; }
+
 /* Filters */
 .filters {
     background-color: var(--primary-color);

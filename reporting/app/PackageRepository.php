@@ -809,7 +809,7 @@ class PackageRepository {
         $systemArch = $this->db->escape($systemArch);
         $sql = "
             SELECT 
-                p.name, p.version, r.name as repo
+                p.name, p.version, r.name as repo, p.csize, p.isize
             FROM packages p
             INNER JOIN repositories r ON p.repo_id = r.id
             WHERE p.system_arch = '$systemArch'
