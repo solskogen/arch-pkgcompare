@@ -23,7 +23,7 @@ Layout::header('aarch64 Packages');
             <div class="alert alert-info">No packages found.</div>
         <?php else: ?>
             <div class="filters">
-                <input type="text" id="search" placeholder="Filter packages..." style="width:100%;box-sizing:border-box;">
+                <input type="text" id="search" class="form-input" placeholder="Filter packages...">
             </div>
             <table id="pkg-table">
                 <thead>

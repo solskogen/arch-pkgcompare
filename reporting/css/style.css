@@ -488,6 +488,11 @@ th.sortable::after {
 }
 th.sortable.sort-asc::after  { content: ' ▲'; opacity: 1; }
 th.sortable.sort-desc::after { content: ' ▼'; opacity: 1; }
+th.sortable.sort-asc,
+th.sortable.sort-desc {
+    background-color: rgba(100, 181, 246, 0.25);
+    color: #fff;
+}
 
 /* Filters */
 .filters {
