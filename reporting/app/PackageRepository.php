@@ -970,20 +970,25 @@ class PackageRepository {
      */
     public function countDependencyDifferences() {
         $sql = "
-            SELECT COUNT(DISTINCT p1.name) as count
-            FROM packages p1
-            INNER JOIN packages p2 ON p1.name = p2.name
-            LEFT JOIN package_depends ad ON p1.id = ad.package_id
-            LEFT JOIN package_depends xd ON p2.id = xd.package_id
-            WHERE p1.system_arch = 'aarch64'
-            AND p2.system_arch = 'x86_64'
-            GROUP BY p1.name
-            HAVING GROUP_CONCAT(DISTINCT ad.dependency SEPARATOR ', ') != 
-                   GROUP_CONCAT(DISTINCT xd.dependency SEPARATOR ', ')
+            SELECT COUNT(DISTINCT pkg_name) FROM (
+                SELECT p1.name AS pkg_name
+                FROM package_depends pd1
+                JOIN packages p1 ON pd1.package_id = p1.id AND p1.system_arch = 'aarch64'
+                JOIN packages p2 ON p1.name = p2.name AND p2.system_arch = 'x86_64'
+                LEFT JOIN package_depends pd2 ON pd2.package_id = p2.id AND pd2.dependency = pd1.dependency
+                WHERE pd2.package_id IS NULL
+                UNION ALL
+                SELECT p2.name AS pkg_name
+                FROM package_depends pd2
+                JOIN packages p2 ON pd2.package_id = p2.id AND p2.system_arch = 'x86_64'
+                JOIN packages p1 ON p2.name = p1.name AND p1.system_arch = 'aarch64'
+                LEFT JOIN package_depends pd1 ON pd1.package_id = p1.id AND pd1.dependency = pd2.dependency
+                WHERE pd1.package_id IS NULL
+            ) t
         ";
-        $result = $this->db->query("SELECT COUNT(*) as total FROM (" . $sql . ") t");
+        $result = $this->db->query($sql);
         $row = $result->fetch_assoc();
-        return $row['total'] ?? 0;
+        return $row['COUNT(DISTINCT pkg_name)'] ?? 0;
     }
 
     /**
@@ -1016,20 +1021,25 @@ class PackageRepository {
      */
     public function countProvidesDifferences() {
         $sql = "
-            SELECT COUNT(DISTINCT p1.name) as count
-            FROM packages p1
-            INNER JOIN packages p2 ON p1.name = p2.name
-            LEFT JOIN package_provides pp1 ON p1.id = pp1.package_id
-            LEFT JOIN package_provides pp2 ON p2.id = pp2.package_id
-            WHERE p1.system_arch = 'aarch64'
-            AND p2.system_arch = 'x86_64'
-            GROUP BY p1.name
-            HAVING GROUP_CONCAT(DISTINCT pp1.provides_name SEPARATOR ', ') != 
-                   GROUP_CONCAT(DISTINCT pp2.provides_name SEPARATOR ', ')
+            SELECT COUNT(DISTINCT pkg_name) FROM (
+                SELECT p1.name AS pkg_name
+                FROM package_provides pp1
+                JOIN packages p1 ON pp1.package_id = p1.id AND p1.system_arch = 'aarch64'
+                JOIN packages p2 ON p1.name = p2.name AND p2.system_arch = 'x86_64'
+                LEFT JOIN package_provides pp2 ON pp2.package_id = p2.id AND pp2.provides_name = pp1.provides_name
+                WHERE pp2.package_id IS NULL
+                UNION ALL
+                SELECT p2.name AS pkg_name
+                FROM package_provides pp2
+                JOIN packages p2 ON pp2.package_id = p2.id AND p2.system_arch = 'x86_64'
+                JOIN packages p1 ON p2.name = p1.name AND p1.system_arch = 'aarch64'
+                LEFT JOIN package_provides pp1 ON pp1.package_id = p1.id AND pp1.provides_name = pp2.provides_name
+                WHERE pp1.package_id IS NULL
+            ) t
         ";
-        $result = $this->db->query("SELECT COUNT(*) as total FROM (" . $sql . ") t");
+        $result = $this->db->query($sql);
         $row = $result->fetch_assoc();
-        return $row['total'] ?? 0;
+        return $row['COUNT(DISTINCT pkg_name)'] ?? 0;
     }
 
     /**

@@ -611,6 +611,13 @@ def main():
                 future.result()  # Raise any exceptions
         print(f"[Relations] All complete in {time.time() - rel_start:.1f}s")
 
+        # Update query statistics so MySQL has accurate plans on first post-import query
+        print("[Analyze] Updating table statistics...")
+        for table in ['packages', 'package_depends', 'package_provides',
+                      'package_licenses', 'package_groups', 'package_optional_deps']:
+            cursor.execute(f'ANALYZE TABLE {table}')
+            cursor.fetchall()
+
         # Record import timestamp
         cursor.execute(
             'INSERT INTO import_metadata (import_timestamp) VALUES (%s)',
@@ -642,8 +649,14 @@ def main():
         for system_arch, repo, count in cursor.fetchall():
             print(f"  {system_arch:10} {repo:10} {count:6,} packages")
 
-        # Clear the reporting cache since database has been updated
-        cache_dir = os.path.join(os.path.dirname(__file__), 'reporting', 'cache')
+        # Determine the deployed reporting directory (may differ from source)
+        try:
+            reporting_dir = CONFIG.get('deploy', 'reporting_dir')
+        except Exception:
+            reporting_dir = os.path.join(os.path.dirname(__file__), 'reporting')
+
+        # Clear old cache files from the deployed reporting directory
+        cache_dir = os.path.join(reporting_dir, 'cache')
         if os.path.exists(cache_dir):
             try:
                 cache_files = glob.glob(os.path.join(cache_dir, '*.cache'))
@@ -652,6 +665,23 @@ def main():
                 print(f"\n✓ Cleared {len(cache_files)} cache file(s)")
             except Exception as e:
                 print(f"⚠ Warning: Could not clear cache: {e}", file=sys.stderr)
+
+        # Pre-warm the analysis cache so the first web request is fast
+        warm_script = os.path.join(reporting_dir, 'warm_cache.php')
+        if os.path.exists(warm_script):
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ['php', warm_script],
+                    capture_output=True, text=True, timeout=60,
+                    cwd=reporting_dir
+                )
+                if result.stdout:
+                    print(result.stdout.strip())
+                if result.returncode != 0 and result.stderr:
+                    print(f"⚠ Cache warm warning: {result.stderr.strip()}", file=sys.stderr)
+            except Exception as e:
+                print(f"⚠ Warning: Could not warm cache: {e}", file=sys.stderr)
 
         cursor.close()
         conn.close()
