@@ -24,6 +24,10 @@ Layout::header('aarch64 Packages');
         <?php else: ?>
             <div class="filters">
                 <input type="text" id="search" class="form-input" placeholder="Filter packages...">
+                <label style="display:inline-flex;align-items:center;gap:8px;margin-top:12px;cursor:pointer;font-size:14px;">
+                    <input type="checkbox" id="show-any" checked>
+                    Show <code>any</code> packages (architecture-independent)
+                </label>
             </div>
             <table id="pkg-table">
                 <thead>
@@ -37,7 +41,7 @@ Layout::header('aarch64 Packages');
                 </thead>
                 <tbody>
                     <?php foreach ($packages as $pkg): ?>
-                    <tr>
+                    <tr<?php echo $pkg['arch'] === 'any' ? ' data-any="1"' : ''; ?>>
                         <td>
                             <a href="<?php echo Formatter::url('package-detail.php', ['name' => $pkg['name']]); ?>">
                                 <?php echo Formatter::escape($pkg['name']); ?>
@@ -87,12 +91,17 @@ Layout::header('aarch64 Packages');
     });
 
     // Filter
-    document.getElementById('search').addEventListener('input', function () {
-        const q = this.value.toLowerCase();
+    function applyFilter() {
+        const q = document.getElementById('search').value.toLowerCase();
+        const showAny = document.getElementById('show-any').checked;
         tbody.querySelectorAll('tr').forEach(r => {
-            r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
+            const textMatch = r.textContent.toLowerCase().includes(q);
+            const anyHidden = !showAny && r.dataset.any === '1';
+            r.style.display = (textMatch && !anyHidden) ? '' : 'none';
         });
-    });
+    }
+    document.getElementById('search').addEventListener('input', applyFilter);
+    document.getElementById('show-any').addEventListener('change', applyFilter);
 })();
 </script>
 

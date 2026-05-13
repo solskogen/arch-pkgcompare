@@ -809,9 +809,11 @@ class PackageRepository {
         $systemArch = $this->db->escape($systemArch);
         $sql = "
             SELECT 
-                p.name, p.version, r.name as repo, p.csize, p.isize
+                p.name, p.version, r.name as repo, p.csize, p.isize,
+                a.name as arch
             FROM packages p
             INNER JOIN repositories r ON p.repo_id = r.id
+            INNER JOIN architectures a ON p.arch_id = a.id
             WHERE p.system_arch = '$systemArch'
             GROUP BY p.name
             ORDER BY r.name, p.name
