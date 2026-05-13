@@ -493,6 +493,9 @@ th.sortable.sort-desc {
     background-color: rgba(100, 181, 246, 0.25);
     color: #fff;
 }
+td.sort-col {
+    background-color: rgba(100, 181, 246, 0.07);
+}
 
 /* Filters */
 .filters {

@@ -76,6 +76,10 @@ Layout::header('x86_64 Packages');
             table.querySelectorAll('th.sortable').forEach(h => h.classList.remove('sort-asc', 'sort-desc'));
             th.classList.add(asc ? 'sort-asc' : 'sort-desc');
 
+            // Highlight sorted column cells
+            tbody.querySelectorAll('td.sort-col').forEach(td => td.classList.remove('sort-col'));
+            tbody.querySelectorAll(`tr td:nth-child(${col + 1})`).forEach(td => td.classList.add('sort-col'));
+
             const rows = Array.from(tbody.querySelectorAll('tr'));
             rows.sort((a, b) => {
                 const av = isNum
