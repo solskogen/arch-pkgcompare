@@ -19,6 +19,7 @@ import os
 import sys
 import MySQLdb
 import configparser
+import argparse
 from urllib.request import urlopen
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
@@ -516,13 +517,27 @@ def insert_optdeps_thread(packages: List[Dict], package_id_map: Dict) -> None:
         conn.close()
 
 
-def clear_old_data_if_needed(cursor) -> bool:
+def clear_old_data_if_needed(cursor, force_full_import: bool = False) -> bool:
     """Clear data only if DB is empty. Returns True if full wipe happened.
     
     On first run (empty DB): truncate all tables for clean initialization.
     On subsequent runs (existing data): skip truncate, delete old packages
       for configured architectures, and do incremental update (faster).
     """
+    if force_full_import:
+        print("[Clean] Full import requested, performing complete rebuild...")
+        cursor.execute('SET FOREIGN_KEY_CHECKS=0')
+        try:
+            for table in LOADER_TABLES:
+                cursor.execute(f'TRUNCATE TABLE {table}')
+            print(f"[Clean] Wiped {len(LOADER_TABLES)} tables")
+        finally:
+            try:
+                cursor.execute('SET FOREIGN_KEY_CHECKS=1')
+            except Exception as e:
+                print(f"[Warn] Could not re-enable foreign key checks: {e}", file=sys.stderr)
+        return True
+
     cursor.execute('SELECT COUNT(*) FROM packages')
     has_data = cursor.fetchone()[0] > 0
     
@@ -592,6 +607,14 @@ def clear_old_data_if_needed(cursor) -> bool:
 def main():
     """Main execution function."""
     try:
+        parser = argparse.ArgumentParser(description='Download and import Arch Linux package databases.')
+        parser.add_argument(
+            '--full-import',
+            action='store_true',
+            help='wipe the database before importing'
+        )
+        args = parser.parse_args()
+
         print("=" * 70)
         print("ARCH LINUX PACKAGE DATABASE LOADER")
         print("=" * 70)
@@ -616,7 +639,7 @@ def main():
         print("[DB] Connecting to MySQL database...")
         conn = get_connection()
         cursor = conn.cursor()
-        clear_old_data_if_needed(cursor)
+        clear_old_data_if_needed(cursor, force_full_import=args.full_import)
         conn.commit()
 
         repo_map, arch_map, license_map = bulk_load_ids(cursor)
