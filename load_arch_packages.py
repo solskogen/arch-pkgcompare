@@ -15,13 +15,12 @@ Performance optimizations:
 import tarfile
 import gzip
 import glob
-import io
 import os
 import sys
 import MySQLdb
 import configparser
 from urllib.request import urlopen
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
@@ -110,6 +109,21 @@ BATCH_SIZE = CONFIG.getint('loader', 'batch_size', fallback=5000)
 PARALLEL_DOWNLOADS = CONFIG.getint('loader', 'parallel_downloads', fallback=5)
 DOWNLOAD_TIMEOUT = CONFIG.getint('loader', 'timeout', fallback=30)
 
+LOADER_TABLES = [
+    'packages',
+    'package_depends',
+    'package_provides',
+    'package_licenses',
+    'package_groups',
+    'package_optional_deps',
+    'repositories',
+    'architectures',
+    'licenses',
+    'groups',
+    'optional_deps',
+    'import_metadata',
+]
+
 
 def parse_desc_file(content: str) -> Dict[str, any]:
     """Parse a desc file from the tar archive into a dictionary."""
@@ -163,27 +177,21 @@ def download_and_extract_db(url: str, repo_name: str) -> List[Dict]:
     try:
         start = time.time()
         with urlopen(url, timeout=DOWNLOAD_TIMEOUT) as response:
-            data = response.read()
-            if not data:
-                raise Exception(f"Empty response for {repo_name}")
-        
-        dl_time = time.time() - start
-        print(f"[Extract] {repo_name} ({dl_time:.1f}s)")
-        
-        extract_start = time.time()
-        with gzip.GzipFile(fileobj=io.BytesIO(data)) as gz_file:
-            with tarfile.open(fileobj=gz_file, mode='r|') as tar:
-                for member in tar:
-                    if member.name.endswith('/desc'):
-                        extracted = tar.extractfile(member)
-                        if extracted:
-                            content = extracted.read().decode('utf-8')
-                            pkg_data = parse_desc_file(content)
-                            pkg_data['repo'] = repo_name
-                            packages.append(pkg_data)
-        
-        extract_time = time.time() - extract_start
-        print(f"[Done] {repo_name}: {len(packages)} packages ({extract_time:.1f}s)")
+            with gzip.GzipFile(fileobj=response) as gz_file:
+                with tarfile.open(fileobj=gz_file, mode='r|') as tar:
+                    for member in tar:
+                        if member.name.endswith('/desc'):
+                            extracted = tar.extractfile(member)
+                            if extracted:
+                                content = extracted.read().decode('utf-8')
+                                pkg_data = parse_desc_file(content)
+                                pkg_data['repo'] = repo_name
+                                packages.append(pkg_data)
+
+        elapsed = time.time() - start
+        if not packages:
+            raise Exception(f"Empty response for {repo_name}")
+        print(f"[Done] {repo_name}: {len(packages)} packages ({elapsed:.1f}s)")
         
     except Exception as e:
         print(f"[Error] {repo_name}: {e}", file=sys.stderr)
@@ -225,33 +233,25 @@ def bulk_load_ids(cursor) -> Tuple[Dict, Dict, Dict]:
     return repos, archs, licenses
 
 
-def ensure_id_exists(cursor, table: str, column: str, value: str, id_map: Dict) -> int:
+def ensure_id_exists(cursor, table: str, column: str, value: str, id_map: Dict) -> Optional[int]:
     """Ensure ID exists, creating if necessary, and return it."""
     if value in id_map:
         return id_map[value]
     
-    try:
-        cursor.execute(f'INSERT IGNORE INTO {table} ({column}) VALUES (%s)', (value,))
-        new_id = cursor.lastrowid
-        if new_id:  # Only update map if a new row was inserted
-            id_map[value] = new_id
-        else:  # Row already existed, fetch its ID
-            cursor.execute(f'SELECT id FROM {table} WHERE {column} = %s', (value,))
-            result = cursor.fetchone()
-            if result:
-                new_id = result[0]
-                id_map[value] = new_id
-    except Exception:
-        # Try fetching the ID if insert failed
-        cursor.execute(f'SELECT id FROM {table} WHERE {column} = %s', (value,))
-        result = cursor.fetchone()
-        if result:
-            new_id = result[0]
-            id_map[value] = new_id
-        else:
-            return None
-    
-    return id_map.get(value)
+    cursor.execute(f'INSERT IGNORE INTO {table} ({column}) VALUES (%s)', (value,))
+    new_id = cursor.lastrowid
+    if new_id:  # Only update map if a new row was inserted
+        id_map[value] = new_id
+        return new_id
+
+    cursor.execute(f'SELECT id FROM {table} WHERE {column} = %s', (value,))
+    result = cursor.fetchone()
+    if result:
+        new_id = result[0]
+        id_map[value] = new_id
+        return new_id
+
+    return None
 
 
 _PACKAGE_INSERT_SQL = '''
@@ -511,16 +511,16 @@ def insert_optdeps_thread(packages: List[Dict], package_id_map: Dict) -> None:
 def clear_old_data(cursor) -> None:
     """Clear all data from database before reloading."""
     print("[Clean] Wiping all database tables...")
+    cursor.execute('SET FOREIGN_KEY_CHECKS=0')
     try:
-        cursor.execute('SET FOREIGN_KEY_CHECKS=0')
-        cursor.execute('SHOW TABLES')
-        tables = [row[0] for row in cursor.fetchall()]
-        for table in tables:
+        for table in LOADER_TABLES:
             cursor.execute(f'TRUNCATE TABLE {table}')
-        cursor.execute('SET FOREIGN_KEY_CHECKS=1')
-        print(f"[Clean] Wiped {len(tables)} tables")
-    except Exception as e:
-        print(f"[Warn] Could not clear old data: {e}")
+        print(f"[Clean] Wiped {len(LOADER_TABLES)} tables")
+    finally:
+        try:
+            cursor.execute('SET FOREIGN_KEY_CHECKS=1')
+        except Exception as e:
+            print(f"[Warn] Could not re-enable foreign key checks: {e}", file=sys.stderr)
 
 
 def main():
@@ -687,6 +687,8 @@ def main():
         conn.close()
 
     except Exception as e:
+        if 'dl_executor' in locals():
+            dl_executor.shutdown(wait=False)
         print(f"✗ Error: {e}", file=sys.stderr)
         sys.exit(1)
 
