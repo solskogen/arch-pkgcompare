@@ -508,19 +508,40 @@ def insert_optdeps_thread(packages: List[Dict], package_id_map: Dict) -> None:
         conn.close()
 
 
-def clear_old_data(cursor) -> None:
-    """Clear all data from database before reloading."""
-    print("[Clean] Wiping all database tables...")
-    cursor.execute('SET FOREIGN_KEY_CHECKS=0')
-    try:
-        for table in LOADER_TABLES:
-            cursor.execute(f'TRUNCATE TABLE {table}')
-        print(f"[Clean] Wiped {len(LOADER_TABLES)} tables")
-    finally:
+def clear_old_data_if_needed(cursor) -> bool:
+    """Clear data only if DB is empty. Returns True if full wipe happened.
+    
+    On first run (empty DB): truncate all tables for clean initialization.
+    On subsequent runs (existing data): skip truncate, delete old packages
+      for configured architectures, and do incremental update (faster).
+    """
+    cursor.execute('SELECT COUNT(*) FROM packages')
+    has_data = cursor.fetchone()[0] > 0
+    
+    if not has_data:
+        # First run: full wipe
+        print("[Clean] Database empty, performing full initialization...")
+        cursor.execute('SET FOREIGN_KEY_CHECKS=0')
         try:
-            cursor.execute('SET FOREIGN_KEY_CHECKS=1')
-        except Exception as e:
-            print(f"[Warn] Could not re-enable foreign key checks: {e}", file=sys.stderr)
+            for table in LOADER_TABLES:
+                cursor.execute(f'TRUNCATE TABLE {table}')
+            print(f"[Clean] Wiped {len(LOADER_TABLES)} tables")
+        finally:
+            try:
+                cursor.execute('SET FOREIGN_KEY_CHECKS=1')
+            except Exception as e:
+                print(f"[Warn] Could not re-enable foreign key checks: {e}", file=sys.stderr)
+        return True
+    
+    # Subsequent runs: delete old data for configured architectures only
+    print("[Clean] Database has existing data, using incremental update mode...")
+    archs_to_delete = list(DB_URLS.keys())
+    placeholders = ','.join(['%s'] * len(archs_to_delete))
+    
+    cursor.execute(f'DELETE FROM packages WHERE system_arch IN ({placeholders})', archs_to_delete)
+    deleted = cursor.rowcount
+    print(f"[Clean] Deleted {deleted} old packages from {', '.join(archs_to_delete)}")
+    return False
 
 
 def main():
@@ -550,7 +571,7 @@ def main():
         print("[DB] Connecting to MySQL database...")
         conn = get_connection()
         cursor = conn.cursor()
-        clear_old_data(cursor)
+        was_full_wipe = clear_old_data_if_needed(cursor)
         conn.commit()
 
         repo_map, arch_map, license_map = bulk_load_ids(cursor)
