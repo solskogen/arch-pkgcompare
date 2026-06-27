@@ -629,11 +629,11 @@ def main():
         cursor.execute('SELECT COUNT(*) FROM packages')
         total = cursor.fetchone()[0]
 
-        total_time = time.time() - total_start
+        import_time = time.time() - total_start
 
         print("\n" + "=" * 70)
         print(f"✓ Successfully loaded {total} packages into the database")
-        print(f"Total time: {total_time:.1f}s ({total/total_time:.0f} packages/sec)")
+        print(f"Import time: {import_time:.1f}s ({total/import_time:.0f} packages/sec)")
         print("=" * 70)
 
         # Print breakdown
@@ -682,6 +682,9 @@ def main():
                     print(f"⚠ Cache warm warning: {result.stderr.strip()}", file=sys.stderr)
             except Exception as e:
                 print(f"⚠ Warning: Could not warm cache: {e}", file=sys.stderr)
+
+        end_to_end_time = time.time() - total_start
+        print(f"\nEnd-to-end time (including cache warm): {end_to_end_time:.1f}s")
 
         cursor.close()
         conn.close()
