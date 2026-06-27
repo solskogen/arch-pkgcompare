@@ -124,6 +124,14 @@ LOADER_TABLES = [
     'import_metadata',
 ]
 
+RELATION_TABLES = [
+    'package_depends',
+    'package_provides',
+    'package_licenses',
+    'package_groups',
+    'package_optional_deps',
+]
+
 
 def parse_desc_file(content: str) -> Dict[str, any]:
     """Parse a desc file from the tar archive into a dictionary."""
@@ -532,15 +540,52 @@ def clear_old_data_if_needed(cursor) -> bool:
             except Exception as e:
                 print(f"[Warn] Could not re-enable foreign key checks: {e}", file=sys.stderr)
         return True
+
+    # If relation tables contain orphan rows, the database has been left in an
+    # inconsistent state by a previous interrupted or buggy run. Fall back to a
+    # full wipe so we can rebuild from scratch correctly.
+    for table in RELATION_TABLES:
+        cursor.execute(
+            f'''
+            SELECT 1
+            FROM {table} t
+            LEFT JOIN packages p ON p.id = t.package_id
+            WHERE p.id IS NULL
+            LIMIT 1
+            '''
+        )
+        if cursor.fetchone():
+            print(f"[Clean] Detected orphan rows in {table}, performing full rebuild...")
+            cursor.execute('SET FOREIGN_KEY_CHECKS=0')
+            try:
+                for wipe_table in LOADER_TABLES:
+                    cursor.execute(f'TRUNCATE TABLE {wipe_table}')
+                print(f"[Clean] Wiped {len(LOADER_TABLES)} tables")
+            finally:
+                try:
+                    cursor.execute('SET FOREIGN_KEY_CHECKS=1')
+                except Exception as e:
+                    print(f"[Warn] Could not re-enable foreign key checks: {e}", file=sys.stderr)
+            return True
     
     # Subsequent runs: delete old data for configured architectures only
     print("[Clean] Database has existing data, using incremental update mode...")
     archs_to_delete = list(DB_URLS.keys())
     placeholders = ','.join(['%s'] * len(archs_to_delete))
-    
+
+    for table in RELATION_TABLES:
+        cursor.execute(
+            f'''
+            DELETE t
+            FROM {table} t
+            JOIN packages p ON p.id = t.package_id
+            WHERE p.system_arch IN ({placeholders})
+            ''',
+            archs_to_delete,
+        )
     cursor.execute(f'DELETE FROM packages WHERE system_arch IN ({placeholders})', archs_to_delete)
     deleted = cursor.rowcount
-    print(f"[Clean] Deleted {deleted} old packages from {', '.join(archs_to_delete)}")
+    print(f"[Clean] Deleted {deleted} old packages and related rows from {', '.join(archs_to_delete)}")
     return False
 
 
@@ -571,7 +616,7 @@ def main():
         print("[DB] Connecting to MySQL database...")
         conn = get_connection()
         cursor = conn.cursor()
-        was_full_wipe = clear_old_data_if_needed(cursor)
+        clear_old_data_if_needed(cursor)
         conn.commit()
 
         repo_map, arch_map, license_map = bulk_load_ids(cursor)
