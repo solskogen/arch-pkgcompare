@@ -8,36 +8,49 @@ require_once __DIR__ . '/app/PackageRepository.php';
 require_once __DIR__ . '/app/Cache.php';
 require_once __DIR__ . '/app/Helpers.php';
 
+function getAnalysisCacheVersion($db) {
+    $result = $db->query("SELECT id, import_timestamp FROM import_metadata ORDER BY id DESC LIMIT 1");
+    if ($result && $result->num_rows > 0) {
+        $row = $result->fetch_assoc();
+        return $row['id'] . ':' . $row['import_timestamp'];
+    }
+    return 'bootstrap';
+}
+
 $cache = new Cache(3600); // 1 hour cache
-$cacheKey = 'analysis_stats';
 
 // Allow bypassing cache with ?nocache=1 parameter
 $bypassCache = isset($_GET['nocache']) && $_GET['nocache'] == '1';
 
-// Try to get stats from cache (unless bypassed)
-$stats = !$bypassCache ? $cache->get($cacheKey) : null;
-$cached = ($stats !== null);
-
-if ($stats === null) {
-    try {
-        $db = Database::getInstance();
-        $repo = new PackageRepository($db);
-        $stats = $repo->getStats();
-        // Cache the stats
-        $cache->set($cacheKey, $stats);
-    } catch (Exception $e) {
-        die("Error: " . $e->getMessage());
-    }
-}
-
 try {
     $db = Database::getInstance();
     $repo = new PackageRepository($db);
+    $cacheVersion = getAnalysisCacheVersion($db);
+    $statsCacheKey = 'analysis_stats:' . $cacheVersion;
+    $countsCacheKeyA = 'analysis_counts_a:' . $cacheVersion;
+    $countsCacheKeyB = 'analysis_counts_b:' . $cacheVersion;
+    $countsCacheKeyC = 'analysis_counts_c:' . $cacheVersion;
+
+    // Try to get stats from cache (unless bypassed)
+    $stats = !$bypassCache ? $cache->get($statsCacheKey) : null;
+    $cached = ($stats !== null);
+
+    if ($stats === null) {
+        $stats = $repo->getStats();
+        $cache->set($statsCacheKey, $stats);
+    }
     
     // Cache these counts as well if not cached
-    $countsCacheKey = 'analysis_counts';
-    $counts = !$bypassCache ? $cache->get($countsCacheKey) : null;
-    
+    $counts = null;
+    if (!$bypassCache) {
+        $countsA = $cache->get($countsCacheKeyA);
+        $countsB = $cache->get($countsCacheKeyB);
+        $countsC = $cache->get($countsCacheKeyC);
+        if ($countsA !== null && $countsB !== null && $countsC !== null) {
+            $counts = array_merge($countsA, $countsB, $countsC);
+        }
+    }
+
     if ($counts === null) {
         $counts = [
             'repo_diff' => $repo->countRepoDifferences(),
@@ -50,7 +63,21 @@ try {
             'replace_diff' => $repo->countReplaceDifferences(),
             'cycle_counts' => $repo->countCyclesByLength(),
         ];
-        $cache->set($countsCacheKey, $counts);
+        $cache->set($countsCacheKeyA, [
+            'repo_diff' => $counts['repo_diff'],
+            'dep_diff' => $counts['dep_diff'],
+        ]);
+        $cache->set($countsCacheKeyB, [
+            'provides_diff' => $counts['provides_diff'],
+            'optdep_diff' => $counts['optdep_diff'],
+            'makedep_diff' => $counts['makedep_diff'],
+        ]);
+        $cache->set($countsCacheKeyC, [
+            'group_diff' => $counts['group_diff'],
+            'conflict_diff' => $counts['conflict_diff'],
+            'replace_diff' => $counts['replace_diff'],
+            'cycle_counts' => $counts['cycle_counts'],
+        ]);
     }
     
     $repo_diff_count = $counts['repo_diff'];

@@ -17,20 +17,68 @@ $cache = new Cache(3600);
 $db = Database::getInstance();
 $repo = new PackageRepository($db);
 
-$stats = $repo->getStats();
-$cache->set('analysis_stats', $stats);
+function getAnalysisCacheVersion($db) {
+    $result = $db->query("SELECT id, import_timestamp FROM import_metadata ORDER BY id DESC LIMIT 1");
+    if ($result && $result->num_rows > 0) {
+        $row = $result->fetch_assoc();
+        return $row['id'] . ':' . $row['import_timestamp'];
+    }
+    return 'bootstrap';
+}
 
-$counts = [
-    'repo_diff'     => $repo->countRepoDifferences(),
-    'dep_diff'      => $repo->countDependencyDifferences(),
-    'provides_diff' => $repo->countProvidesDifferences(),
-    'optdep_diff'   => $repo->countOptionalDepDifferences(),
-    'makedep_diff'  => $repo->countMakedepDifferences(),
-    'group_diff'    => $repo->countGroupDifferences(),
-    'conflict_diff' => $repo->countConflictDifferences(),
-    'replace_diff'  => $repo->countReplaceDifferences(),
-    'cycle_counts'  => $repo->countCyclesByLength(),
-];
-$cache->set('analysis_counts', $counts);
+$version = getAnalysisCacheVersion($db);
+$statsKey = 'analysis_stats:' . $version;
+$countsKeyA = 'analysis_counts_a:' . $version;
+$countsKeyB = 'analysis_counts_b:' . $version;
+$countsKeyC = 'analysis_counts_c:' . $version;
+$segment = $argv[1] ?? 'all';
+
+switch ($segment) {
+    case 'stats':
+        $cache->set($statsKey, $repo->getStats());
+        break;
+    case 'counts-a':
+        $cache->set($countsKeyA, [
+            'repo_diff' => $repo->countRepoDifferences(),
+            'dep_diff' => $repo->countDependencyDifferences(),
+        ]);
+        break;
+    case 'counts-b':
+        $cache->set($countsKeyB, [
+            'provides_diff' => $repo->countProvidesDifferences(),
+            'optdep_diff' => $repo->countOptionalDepDifferences(),
+            'makedep_diff' => $repo->countMakedepDifferences(),
+        ]);
+        break;
+    case 'counts-c':
+        $cache->set($countsKeyC, [
+            'group_diff' => $repo->countGroupDifferences(),
+            'conflict_diff' => $repo->countConflictDifferences(),
+            'replace_diff' => $repo->countReplaceDifferences(),
+            'cycle_counts' => $repo->countCyclesByLength(),
+        ]);
+        break;
+    case 'all':
+        $cache->set($statsKey, $repo->getStats());
+        $cache->set($countsKeyA, [
+            'repo_diff'     => $repo->countRepoDifferences(),
+            'dep_diff'      => $repo->countDependencyDifferences(),
+        ]);
+        $cache->set($countsKeyB, [
+            'provides_diff' => $repo->countProvidesDifferences(),
+            'optdep_diff'   => $repo->countOptionalDepDifferences(),
+            'makedep_diff'  => $repo->countMakedepDifferences(),
+        ]);
+        $cache->set($countsKeyC, [
+            'group_diff'    => $repo->countGroupDifferences(),
+            'conflict_diff' => $repo->countConflictDifferences(),
+            'replace_diff'  => $repo->countReplaceDifferences(),
+            'cycle_counts'  => $repo->countCyclesByLength(),
+        ]);
+        break;
+    default:
+        fwrite(STDERR, "Unknown segment: {$segment}\n");
+        exit(1);
+}
 
 printf("[Cache] Warmed in %.2fs\n", microtime(true) - $t);

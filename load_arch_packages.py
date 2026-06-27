@@ -14,7 +14,6 @@ Performance optimizations:
 
 import tarfile
 import gzip
-import glob
 import os
 import sys
 import MySQLdb
@@ -744,31 +743,37 @@ def main():
         except Exception:
             reporting_dir = os.path.join(os.path.dirname(__file__), 'reporting')
 
-        # Clear old cache files from the deployed reporting directory
-        cache_dir = os.path.join(reporting_dir, 'cache')
-        if os.path.exists(cache_dir):
-            try:
-                cache_files = glob.glob(os.path.join(cache_dir, '*.cache'))
-                for cache_file in cache_files:
-                    os.remove(cache_file)
-                print(f"\n✓ Cleared {len(cache_files)} cache file(s)")
-            except Exception as e:
-                print(f"⚠ Warning: Could not clear cache: {e}", file=sys.stderr)
-
         # Pre-warm the analysis cache so the first web request is fast
         warm_script = os.path.join(reporting_dir, 'warm_cache.php')
         if os.path.exists(warm_script):
             try:
                 import subprocess
-                result = subprocess.run(
-                    ['php', warm_script],
-                    capture_output=True, text=True, timeout=60,
-                    cwd=reporting_dir
-                )
-                if result.stdout:
-                    print(result.stdout.strip())
-                if result.returncode != 0 and result.stderr:
-                    print(f"⚠ Cache warm warning: {result.stderr.strip()}", file=sys.stderr)
+                warm_jobs = [
+                    ('stats', ['php', warm_script, 'stats']),
+                    ('counts-a', ['php', warm_script, 'counts-a']),
+                    ('counts-b', ['php', warm_script, 'counts-b']),
+                    ('counts-c', ['php', warm_script, 'counts-c']),
+                ]
+                processes = []
+                for label, cmd in warm_jobs:
+                    proc = subprocess.Popen(
+                        cmd,
+                        cwd=reporting_dir,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                    )
+                    processes.append((label, proc))
+
+                for label, proc in processes:
+                    stdout, stderr = proc.communicate(timeout=120)
+                    if stdout:
+                        print(stdout.strip())
+                    if proc.returncode != 0:
+                        if stderr:
+                            print(f"⚠ Cache warm warning ({label}): {stderr.strip()}", file=sys.stderr)
+                        else:
+                            print(f"⚠ Cache warm warning ({label}): exit code {proc.returncode}", file=sys.stderr)
             except Exception as e:
                 print(f"⚠ Warning: Could not warm cache: {e}", file=sys.stderr)
 
