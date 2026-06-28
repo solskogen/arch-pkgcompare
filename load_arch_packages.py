@@ -19,6 +19,8 @@ import sys
 import MySQLdb
 import configparser
 import argparse
+import hashlib
+import json
 from urllib.request import urlopen
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
@@ -265,8 +267,8 @@ def ensure_id_exists(cursor, table: str, column: str, value: str, id_map: Dict) 
 _PACKAGE_INSERT_SQL = '''
     INSERT INTO packages
     (name, base, version, description, repo_id, arch_id, url,
-     builddate, csize, isize, sha256sum, filename, system_arch, packager)
-    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+     builddate, csize, isize, sha256sum, filename, system_arch, packager, validated_by)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 '''
 
 
@@ -300,6 +302,47 @@ def batch_insert_packages(cursor, packages: List[Dict], system_arch: str,
         if name not in arch_map:
             ensure_id_exists(cursor, 'architectures', 'name', name, arch_map)
 
+    rows = _build_package_rows(packages, system_arch, repo_map, arch_map)
+
+    start_time = time.time()
+    inserted = skipped = 0
+    for i in range(0, len(rows), BATCH_SIZE):
+        n, s = _insert_batch_with_fallback(cursor, _PACKAGE_INSERT_SQL, rows[i:i + BATCH_SIZE], "package")
+        inserted += n
+        skipped += s
+
+    elapsed = time.time() - start_time
+    print(f"[Insert] Complete: {inserted} inserted in {elapsed:.1f}s ({inserted/elapsed:.0f} pkg/sec)")
+    return inserted, skipped
+
+
+def _build_package_rows(packages: List[Dict], system_arch: str, repo_map: Dict, arch_map: Dict) -> List[Tuple]:
+    """Build normalized package rows for SQL insert/update."""
+    def pkg_hash(pkg: Dict) -> str:
+        # Include relation-bearing fields so changes in dependencies/provides/etc
+        # are detected even if core package columns stayed the same.
+        payload = {
+            'NAME': pkg.get('NAME'),
+            'BASE': pkg.get('BASE'),
+            'VERSION': pkg.get('VERSION'),
+            'DESC': pkg.get('DESC'),
+            'URL': pkg.get('URL'),
+            'BUILDDATE': pkg.get('BUILDDATE'),
+            'CSIZE': pkg.get('CSIZE'),
+            'ISIZE': pkg.get('ISIZE'),
+            'SHA256SUM': pkg.get('SHA256SUM'),
+            'FILENAME': pkg.get('FILENAME'),
+            'PACKAGER': pkg.get('PACKAGER'),
+            'ARCH': pkg.get('ARCH'),
+            'LICENSE': sorted([x.strip() for x in get_list(pkg, 'LICENSE') if isinstance(x, str) and x.strip()]),
+            'PROVIDES': sorted([x.strip() for x in get_list(pkg, 'PROVIDES') if isinstance(x, str) and x.strip()]),
+            'DEPENDS': sorted([x.strip() for x in get_list(pkg, 'DEPENDS') if isinstance(x, str) and x.strip()]),
+            'GROUPS': sorted([x.strip() for x in get_list(pkg, 'GROUPS') if isinstance(x, str) and x.strip()]),
+            'OPTDEPENDS': sorted([x.strip() for x in get_list(pkg, 'OPTDEPENDS') if isinstance(x, str) and x.strip()]),
+        }
+        raw = json.dumps(payload, sort_keys=True, separators=(',', ':'))
+        return hashlib.sha256(raw.encode('utf-8')).hexdigest()
+
     rows = []
     for pkg in packages:
         try:
@@ -318,20 +361,155 @@ def batch_insert_packages(cursor, packages: List[Dict], system_arch: str,
                 pkg.get('FILENAME'),
                 system_arch,
                 pkg.get('PACKAGER'),
+                pkg_hash(pkg),
             ))
         except Exception as e:
             print(f"[Skip] Error preparing package {pkg.get('NAME')}: {e}", file=sys.stderr)
+    return rows
 
-    start_time = time.time()
-    inserted = skipped = 0
-    for i in range(0, len(rows), BATCH_SIZE):
-        n, s = _insert_batch_with_fallback(cursor, _PACKAGE_INSERT_SQL, rows[i:i + BATCH_SIZE], "package")
-        inserted += n
-        skipped += s
 
-    elapsed = time.time() - start_time
-    print(f"[Insert] Complete: {inserted} inserted in {elapsed:.1f}s ({inserted/elapsed:.0f} pkg/sec)")
-    return inserted, skipped
+def clear_relations_for_arches(cursor, archs: List[str]) -> None:
+    """Delete all relation rows for packages in selected system architectures."""
+    placeholders = ','.join(['%s'] * len(archs))
+    for table in RELATION_TABLES:
+        cursor.execute(
+            f'''
+            DELETE t
+            FROM {table} t
+            JOIN packages p ON p.id = t.package_id
+            WHERE p.system_arch IN ({placeholders})
+            ''',
+            archs,
+        )
+
+
+def sync_packages_incremental(cursor, packages_by_arch: Dict[str, List[Dict]],
+                             repo_map: Dict, arch_map: Dict) -> Tuple[int, int, int]:
+    """True incremental package sync using staging + merge (no full arch delete)."""
+    print("[Insert] Starting incremental package merge...")
+    archs = list(packages_by_arch.keys())
+    placeholders = ','.join(['%s'] * len(archs))
+
+    # Ensure all repo/arch IDs exist before row preparation.
+    for arch_name, packages in packages_by_arch.items():
+        for name in {pkg.get('repo', 'unknown') for pkg in packages}:
+            if name not in repo_map:
+                ensure_id_exists(cursor, 'repositories', 'name', name, repo_map)
+        for name in {pkg.get('ARCH', 'unknown') for pkg in packages}:
+            if name not in arch_map:
+                ensure_id_exists(cursor, 'architectures', 'name', name, arch_map)
+        if arch_name not in arch_map:
+            ensure_id_exists(cursor, 'architectures', 'name', arch_name, arch_map)
+
+    rows = []
+    for arch_name, packages in packages_by_arch.items():
+        rows.extend(_build_package_rows(packages, arch_name, repo_map, arch_map))
+
+    cursor.execute('DROP TEMPORARY TABLE IF EXISTS staging_packages')
+    cursor.execute('''
+        CREATE TEMPORARY TABLE staging_packages (
+            name VARCHAR(255) NOT NULL,
+            base VARCHAR(255) NULL,
+            version VARCHAR(100) NOT NULL,
+            description TEXT NULL,
+            repo_id INT NOT NULL,
+            arch_id INT NOT NULL,
+            url VARCHAR(500) NULL,
+            builddate BIGINT NULL,
+            csize BIGINT NULL,
+            isize BIGINT NULL,
+            sha256sum VARCHAR(64) NULL,
+            filename VARCHAR(255) NULL,
+            system_arch VARCHAR(50) NOT NULL,
+            packager VARCHAR(255) NULL,
+            validated_by VARCHAR(255) NULL,
+            PRIMARY KEY (name, system_arch),
+            KEY idx_system_arch (system_arch)
+        ) ENGINE=InnoDB
+    ''')
+    batch_executemany(
+        cursor,
+        '''
+        INSERT INTO staging_packages
+        (name, base, version, description, repo_id, arch_id, url,
+         builddate, csize, isize, sha256sum, filename, system_arch, packager, validated_by)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ''',
+        rows,
+    )
+
+    cursor.execute(
+        '''
+        UPDATE packages p
+        JOIN staging_packages s
+            ON p.name = s.name AND p.system_arch = s.system_arch
+        SET
+            p.base = s.base,
+            p.version = s.version,
+            p.description = s.description,
+            p.repo_id = s.repo_id,
+            p.arch_id = s.arch_id,
+            p.url = s.url,
+            p.builddate = s.builddate,
+            p.csize = s.csize,
+            p.isize = s.isize,
+            p.sha256sum = s.sha256sum,
+            p.filename = s.filename,
+            p.packager = s.packager,
+            p.validated_by = s.validated_by
+        WHERE p.system_arch IN (''' + placeholders + ''')
+        ''',
+        archs,
+    )
+    updated = cursor.rowcount
+
+    cursor.execute(
+        '''
+        INSERT INTO packages
+        (name, base, version, description, repo_id, arch_id, url,
+         builddate, csize, isize, sha256sum, filename, system_arch, packager, validated_by)
+        SELECT
+            s.name, s.base, s.version, s.description, s.repo_id, s.arch_id, s.url,
+            s.builddate, s.csize, s.isize, s.sha256sum, s.filename, s.system_arch, s.packager, s.validated_by
+        FROM staging_packages s
+        LEFT JOIN packages p
+            ON p.name = s.name AND p.system_arch = s.system_arch
+        WHERE p.id IS NULL
+        ''',
+    )
+    inserted = cursor.rowcount
+
+    # Remove relation rows for packages that disappeared from upstream metadata.
+    for table in RELATION_TABLES:
+        cursor.execute(
+            '''
+            DELETE t
+            FROM ''' + table + ''' t
+            JOIN packages p ON p.id = t.package_id
+            LEFT JOIN staging_packages s
+                ON p.name = s.name AND p.system_arch = s.system_arch
+            WHERE p.system_arch IN (''' + placeholders + ''')
+              AND s.name IS NULL
+            ''',
+            archs,
+        )
+
+    cursor.execute(
+        '''
+        DELETE p
+        FROM packages p
+        LEFT JOIN staging_packages s
+            ON p.name = s.name AND p.system_arch = s.system_arch
+        WHERE p.system_arch IN (''' + placeholders + ''')
+          AND s.name IS NULL
+        ''',
+        archs,
+    )
+    deleted = cursor.rowcount
+
+    cursor.execute('DROP TEMPORARY TABLE IF EXISTS staging_packages')
+    print(f"[Insert] Incremental merge complete: {updated} updated, {inserted} inserted, {deleted} deleted")
+    return updated, inserted, deleted
 
 
 def _insert_arch_packages(packages: List[Dict], system_arch: str,
@@ -582,24 +760,8 @@ def clear_old_data_if_needed(cursor, force_full_import: bool = False) -> bool:
                     print(f"[Warn] Could not re-enable foreign key checks: {e}", file=sys.stderr)
             return True
     
-    # Subsequent runs: delete old data for configured architectures only
-    print("[Clean] Database has existing data, using incremental update mode...")
-    archs_to_delete = list(DB_URLS.keys())
-    placeholders = ','.join(['%s'] * len(archs_to_delete))
-
-    for table in RELATION_TABLES:
-        cursor.execute(
-            f'''
-            DELETE t
-            FROM {table} t
-            JOIN packages p ON p.id = t.package_id
-            WHERE p.system_arch IN ({placeholders})
-            ''',
-            archs_to_delete,
-        )
-    cursor.execute(f'DELETE FROM packages WHERE system_arch IN ({placeholders})', archs_to_delete)
-    deleted = cursor.rowcount
-    print(f"[Clean] Deleted {deleted} old packages and related rows from {', '.join(archs_to_delete)}")
+    # Existing DB: keep package rows and do true incremental merge later.
+    print("[Clean] Database has existing data, using true incremental merge mode...")
     return False
 
 
@@ -638,7 +800,7 @@ def main():
         print("[DB] Connecting to MySQL database...")
         conn = get_connection()
         cursor = conn.cursor()
-        clear_old_data_if_needed(cursor, force_full_import=args.full_import)
+        did_full_wipe = clear_old_data_if_needed(cursor, force_full_import=args.full_import)
         conn.commit()
 
         repo_map, arch_map, license_map = bulk_load_ids(cursor)
@@ -651,25 +813,40 @@ def main():
         ensure_id_exists(cursor, 'architectures', 'name', 'any', arch_map)
         conn.commit()
 
-        # Pipeline: as each arch finishes downloading, insert it immediately (own connection)
         all_packages_flat = []
-        with ThreadPoolExecutor(max_workers=len(DB_URLS)) as insert_executor:
-            insert_futures: Dict = {}
+        for f in as_completed(future_to_arch):
+            arch = future_to_arch[f]
+            arch_packages_dl[arch].extend(f.result())
+            arch_pending[arch] -= 1
 
-            for f in as_completed(future_to_arch):
-                arch = future_to_arch[f]
-                arch_packages_dl[arch].extend(f.result())
-                arch_pending[arch] -= 1
-                if arch_pending[arch] == 0:
-                    pkgs = arch_packages_dl[arch]
+        rebuild_relations = True
+        if did_full_wipe:
+            # Full rebuild path: insert each architecture in parallel.
+            with ThreadPoolExecutor(max_workers=len(DB_URLS)) as insert_executor:
+                insert_futures: Dict = {}
+                for arch, pkgs in arch_packages_dl.items():
                     for pkg in pkgs:
                         pkg['_system_arch'] = arch
                     insert_futures[insert_executor.submit(
                         _insert_arch_packages, pkgs, arch, repo_map, arch_map
                     )] = arch
 
-            for f in as_completed(insert_futures):
-                all_packages_flat.extend(f.result())
+                for f in as_completed(insert_futures):
+                    all_packages_flat.extend(f.result())
+        else:
+            # True incremental path: merge package rows and preserve unchanged package IDs.
+            for arch, pkgs in arch_packages_dl.items():
+                for pkg in pkgs:
+                    pkg['_system_arch'] = arch
+                all_packages_flat.extend(pkgs)
+
+            updated, inserted, deleted = sync_packages_incremental(cursor, arch_packages_dl, repo_map, arch_map)
+            rebuild_relations = (updated + inserted + deleted) > 0
+            if rebuild_relations:
+                clear_relations_for_arches(cursor, list(DB_URLS.keys()))
+            else:
+                print("[Relations] No package changes detected, skipping relation rebuild")
+            conn.commit()
 
         dl_executor.shutdown(wait=False)
         print("[Download] All downloads and inserts complete")
@@ -677,27 +854,28 @@ def main():
         # Commit to start a fresh transaction that sees all arch-thread commits
         conn.commit()
 
-        # Now pre-compute ALL package ID maps AFTER packages are inserted
-        print("[Lookup] Pre-computing package ID maps...")
-        package_id_map = {}
-        cursor.execute('SELECT name, system_arch, id FROM packages')
-        for name, arch, pkg_id in cursor.fetchall():
-            package_id_map[(name, arch)] = pkg_id
+        if rebuild_relations:
+            # Now pre-compute ALL package ID maps AFTER packages are inserted
+            print("[Lookup] Pre-computing package ID maps...")
+            package_id_map = {}
+            cursor.execute('SELECT name, system_arch, id FROM packages')
+            for name, arch, pkg_id in cursor.fetchall():
+                package_id_map[(name, arch)] = pkg_id
 
-        # Insert all relations in parallel (each uses its own connection)
-        print("\n[Relations] Inserting package relationships (parallel)...")
-        rel_start = time.time()
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = [
-                executor.submit(insert_licenses_thread, all_packages_flat, license_map, package_id_map),
-                executor.submit(insert_provides_thread, all_packages_flat, package_id_map),
-                executor.submit(insert_depends_thread, all_packages_flat, package_id_map),
-                executor.submit(insert_groups_thread, all_packages_flat, package_id_map),
-                executor.submit(insert_optdeps_thread, all_packages_flat, package_id_map),
-            ]
-            for future in as_completed(futures):
-                future.result()  # Raise any exceptions
-        print(f"[Relations] All complete in {time.time() - rel_start:.1f}s")
+            # Insert all relations in parallel (each uses its own connection)
+            print("\n[Relations] Inserting package relationships (parallel)...")
+            rel_start = time.time()
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                futures = [
+                    executor.submit(insert_licenses_thread, all_packages_flat, license_map, package_id_map),
+                    executor.submit(insert_provides_thread, all_packages_flat, package_id_map),
+                    executor.submit(insert_depends_thread, all_packages_flat, package_id_map),
+                    executor.submit(insert_groups_thread, all_packages_flat, package_id_map),
+                    executor.submit(insert_optdeps_thread, all_packages_flat, package_id_map),
+                ]
+                for future in as_completed(futures):
+                    future.result()  # Raise any exceptions
+            print(f"[Relations] All complete in {time.time() - rel_start:.1f}s")
 
         # Update query statistics so MySQL has accurate plans on first post-import query
         print("[Analyze] Updating table statistics...")
