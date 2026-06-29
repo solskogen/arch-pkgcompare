@@ -9,6 +9,9 @@ import sys
 import os
 import tempfile
 import configparser
+import hashlib
+import json
+import subprocess
 from pathlib import Path
 
 # Add parent directory to path
@@ -123,6 +126,115 @@ class TestLoaderPaths(unittest.TestCase):
         with open(loader_path, 'r') as f:
             content = f.read()
         self.assertNotIn('public_html', content, "Hardcoded public_html path found in loader")
+
+
+@unittest.skipUnless(os.environ.get('RUN_LOADER_INTEGRATION_TESTS') == '1',
+                     "set RUN_LOADER_INTEGRATION_TESTS=1 to run loader integration tests")
+class TestLoaderImportParity(unittest.TestCase):
+    """Integration tests comparing full and incremental imports."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        cls.loader = os.path.join(cls.root_dir, 'load_arch_packages.py')
+        cls.mysql = configparser.ConfigParser()
+        cls.mysql.read(os.path.join(cls.root_dir, 'config.ini'))
+
+    def run_loader(self, *args):
+        result = subprocess.run(
+            [sys.executable, self.loader, *args],
+            cwd=self.root_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            self.fail(f"Loader failed with args {args}:\n{result.stdout}")
+        return result.stdout
+
+    def get_connection(self):
+        import MySQLdb
+        return MySQLdb.connect(
+            host=self.mysql['database'].get('host'),
+            user=self.mysql['database'].get('user'),
+            passwd=self.mysql['database'].get('password'),
+            db=self.mysql['database'].get('database'),
+        )
+
+    def fingerprint_query(self, cursor, sql):
+        digest = hashlib.sha256()
+        cursor.execute(sql)
+        for row in cursor:
+            digest.update(json.dumps(row, separators=(',', ':'), default=str).encode('utf-8'))
+            digest.update(b'\n')
+        return digest.hexdigest()
+
+    def snapshot(self):
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            tables = {
+                'packages': """
+                    SELECT p.name, p.system_arch, p.version, p.base, r.name, a.name,
+                           p.url, p.builddate, p.csize, p.isize, p.sha256sum,
+                           p.filename, p.packager, p.validated_by
+                    FROM packages p
+                    JOIN repositories r ON p.repo_id = r.id
+                    JOIN architectures a ON p.arch_id = a.id
+                    ORDER BY p.name, p.system_arch
+                """,
+                'depends': """
+                    SELECT p.name, p.system_arch, d.dependency
+                    FROM package_depends d
+                    JOIN packages p ON p.id = d.package_id
+                    ORDER BY p.name, p.system_arch, d.dependency
+                """,
+                'licenses': """
+                    SELECT p.name, p.system_arch, l.name
+                    FROM package_licenses pl
+                    JOIN packages p ON p.id = pl.package_id
+                    JOIN licenses l ON l.id = pl.license_id
+                    ORDER BY p.name, p.system_arch, l.name
+                """,
+                'provides': """
+                    SELECT p.name, p.system_arch, pp.provides_name
+                    FROM package_provides pp
+                    JOIN packages p ON p.id = pp.package_id
+                    ORDER BY p.name, p.system_arch, pp.provides_name
+                """,
+                'groups': """
+                    SELECT p.name, p.system_arch, g.name
+                    FROM package_groups pg
+                    JOIN packages p ON p.id = pg.package_id
+                    JOIN `groups` g ON g.id = pg.group_id
+                    ORDER BY p.name, p.system_arch, g.name
+                """,
+                'optdeps': """
+                    SELECT p.name, p.system_arch, od.name, pod.description
+                    FROM package_optional_deps pod
+                    JOIN packages p ON p.id = pod.package_id
+                    JOIN optional_deps od ON od.id = pod.optional_dep_id
+                    ORDER BY p.name, p.system_arch, od.name, pod.description
+                """,
+            }
+
+            snapshot = {}
+            for name, sql in tables.items():
+                snapshot[name] = self.fingerprint_query(cursor, sql)
+            return snapshot
+        finally:
+            conn.close()
+
+    def test_incremental_matches_full_import(self):
+        """An incremental import should produce the same logical data as a full import."""
+        self.run_loader('--full-import')
+        full_snapshot = self.snapshot()
+
+        self.run_loader()
+        incr_snapshot = self.snapshot()
+
+        self.assertEqual(full_snapshot, incr_snapshot, "Incremental import must match full import snapshot")
 
 
 if __name__ == '__main__':
