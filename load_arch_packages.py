@@ -173,6 +173,31 @@ def get_list(pkg: Dict, key: str) -> List[str]:
     return [val] if isinstance(val, str) else val
 
 
+def compute_package_signature(pkg: Dict) -> str:
+    """Compute a stable hash for package metadata and relation-bearing fields."""
+    payload = {
+        'NAME': pkg.get('NAME'),
+        'BASE': pkg.get('BASE'),
+        'VERSION': pkg.get('VERSION'),
+        'DESC': pkg.get('DESC'),
+        'URL': pkg.get('URL'),
+        'BUILDDATE': pkg.get('BUILDDATE'),
+        'CSIZE': pkg.get('CSIZE'),
+        'ISIZE': pkg.get('ISIZE'),
+        'SHA256SUM': pkg.get('SHA256SUM'),
+        'FILENAME': pkg.get('FILENAME'),
+        'PACKAGER': pkg.get('PACKAGER'),
+        'ARCH': pkg.get('ARCH'),
+        'LICENSE': sorted([x.strip() for x in get_list(pkg, 'LICENSE') if isinstance(x, str) and x.strip()]),
+        'PROVIDES': sorted([x.strip() for x in get_list(pkg, 'PROVIDES') if isinstance(x, str) and x.strip()]),
+        'DEPENDS': sorted([x.strip() for x in get_list(pkg, 'DEPENDS') if isinstance(x, str) and x.strip()]),
+        'GROUPS': sorted([x.strip() for x in get_list(pkg, 'GROUPS') if isinstance(x, str) and x.strip()]),
+        'OPTDEPENDS': sorted([x.strip() for x in get_list(pkg, 'OPTDEPENDS') if isinstance(x, str) and x.strip()]),
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(',', ':'))
+    return hashlib.sha256(raw.encode('utf-8')).hexdigest()
+
+
 def batch_executemany(cursor, sql: str, rows: List) -> None:
     """Execute SQL in BATCH_SIZE chunks."""
     for i in range(0, len(rows), BATCH_SIZE):
@@ -318,31 +343,6 @@ def batch_insert_packages(cursor, packages: List[Dict], system_arch: str,
 
 def _build_package_rows(packages: List[Dict], system_arch: str, repo_map: Dict, arch_map: Dict) -> List[Tuple]:
     """Build normalized package rows for SQL insert/update."""
-    def pkg_hash(pkg: Dict) -> str:
-        # Include relation-bearing fields so changes in dependencies/provides/etc
-        # are detected even if core package columns stayed the same.
-        payload = {
-            'NAME': pkg.get('NAME'),
-            'BASE': pkg.get('BASE'),
-            'VERSION': pkg.get('VERSION'),
-            'DESC': pkg.get('DESC'),
-            'URL': pkg.get('URL'),
-            'BUILDDATE': pkg.get('BUILDDATE'),
-            'CSIZE': pkg.get('CSIZE'),
-            'ISIZE': pkg.get('ISIZE'),
-            'SHA256SUM': pkg.get('SHA256SUM'),
-            'FILENAME': pkg.get('FILENAME'),
-            'PACKAGER': pkg.get('PACKAGER'),
-            'ARCH': pkg.get('ARCH'),
-            'LICENSE': sorted([x.strip() for x in get_list(pkg, 'LICENSE') if isinstance(x, str) and x.strip()]),
-            'PROVIDES': sorted([x.strip() for x in get_list(pkg, 'PROVIDES') if isinstance(x, str) and x.strip()]),
-            'DEPENDS': sorted([x.strip() for x in get_list(pkg, 'DEPENDS') if isinstance(x, str) and x.strip()]),
-            'GROUPS': sorted([x.strip() for x in get_list(pkg, 'GROUPS') if isinstance(x, str) and x.strip()]),
-            'OPTDEPENDS': sorted([x.strip() for x in get_list(pkg, 'OPTDEPENDS') if isinstance(x, str) and x.strip()]),
-        }
-        raw = json.dumps(payload, sort_keys=True, separators=(',', ':'))
-        return hashlib.sha256(raw.encode('utf-8')).hexdigest()
-
     rows = []
     for pkg in packages:
         try:
@@ -361,7 +361,7 @@ def _build_package_rows(packages: List[Dict], system_arch: str, repo_map: Dict, 
                 pkg.get('FILENAME'),
                 system_arch,
                 pkg.get('PACKAGER'),
-                pkg_hash(pkg),
+                compute_package_signature(pkg),
             ))
         except Exception as e:
             print(f"[Skip] Error preparing package {pkg.get('NAME')}: {e}", file=sys.stderr)
@@ -381,6 +381,16 @@ def clear_relations_for_arches(cursor, archs: List[str]) -> None:
             ''',
             archs,
         )
+
+
+def clear_relations_for_package_ids(cursor, package_ids: List[int]) -> None:
+    """Delete all relation rows for specific package IDs."""
+    if not package_ids:
+        return
+
+    placeholders = ','.join(['%s'] * len(package_ids))
+    for table in RELATION_TABLES:
+        cursor.execute(f'DELETE FROM {table} WHERE package_id IN ({placeholders})', package_ids)
 
 
 def sync_packages_incremental(cursor, packages_by_arch: Dict[str, List[Dict]],
@@ -813,6 +823,12 @@ def main():
         ensure_id_exists(cursor, 'architectures', 'name', 'any', arch_map)
         conn.commit()
 
+        existing_package_state = {}
+        if not did_full_wipe:
+            cursor.execute('SELECT id, name, system_arch, validated_by FROM packages')
+            for pkg_id, name, arch, validated_by in cursor.fetchall():
+                existing_package_state[(name, arch)] = {'id': pkg_id, 'validated_by': validated_by}
+
         all_packages_flat = []
         for f in as_completed(future_to_arch):
             arch = future_to_arch[f]
@@ -820,6 +836,7 @@ def main():
             arch_pending[arch] -= 1
 
         rebuild_relations = True
+        relation_packages = all_packages_flat
         if did_full_wipe:
             # Full rebuild path: insert each architecture in parallel.
             with ThreadPoolExecutor(max_workers=len(DB_URLS)) as insert_executor:
@@ -835,15 +852,38 @@ def main():
                     all_packages_flat.extend(f.result())
         else:
             # True incremental path: merge package rows and preserve unchanged package IDs.
+            changed_packages_by_arch = {}
+            seen_keys = set()
             for arch, pkgs in arch_packages_dl.items():
+                changed_packages_by_arch[arch] = []
                 for pkg in pkgs:
                     pkg['_system_arch'] = arch
+                    signature = compute_package_signature(pkg)
+                    pkg['_signature'] = signature
+                    key = (pkg.get('NAME'), arch)
+                    seen_keys.add(key)
+                    existing = existing_package_state.get(key)
+                    if existing is None or existing.get('validated_by') != signature:
+                        changed_packages_by_arch[arch].append(pkg)
                 all_packages_flat.extend(pkgs)
 
             updated, inserted, deleted = sync_packages_incremental(cursor, arch_packages_dl, repo_map, arch_map)
-            rebuild_relations = (updated + inserted + deleted) > 0
+            rebuild_relations = any(changed_packages_by_arch.values())
             if rebuild_relations:
-                clear_relations_for_arches(cursor, list(DB_URLS.keys()))
+                # Rebuild relations only for packages whose metadata hash changed.
+                package_ids_for_changed = []
+                cursor.execute('SELECT name, system_arch, id FROM packages')
+                package_id_map = {}
+                for name, arch, pkg_id in cursor.fetchall():
+                    package_id_map[(name, arch)] = pkg_id
+
+                for pkgs in changed_packages_by_arch.values():
+                    for pkg in pkgs:
+                        pkg_id = package_id_map.get((pkg.get('NAME'), pkg.get('_system_arch', '')))
+                        if pkg_id:
+                            package_ids_for_changed.append(pkg_id)
+                clear_relations_for_package_ids(cursor, package_ids_for_changed)
+                relation_packages = [pkg for pkgs in changed_packages_by_arch.values() for pkg in pkgs]
             else:
                 print("[Relations] No package changes detected, skipping relation rebuild")
             conn.commit()
@@ -867,11 +907,11 @@ def main():
             rel_start = time.time()
             with ThreadPoolExecutor(max_workers=5) as executor:
                 futures = [
-                    executor.submit(insert_licenses_thread, all_packages_flat, license_map, package_id_map),
-                    executor.submit(insert_provides_thread, all_packages_flat, package_id_map),
-                    executor.submit(insert_depends_thread, all_packages_flat, package_id_map),
-                    executor.submit(insert_groups_thread, all_packages_flat, package_id_map),
-                    executor.submit(insert_optdeps_thread, all_packages_flat, package_id_map),
+                    executor.submit(insert_licenses_thread, relation_packages, license_map, package_id_map),
+                    executor.submit(insert_provides_thread, relation_packages, package_id_map),
+                    executor.submit(insert_depends_thread, relation_packages, package_id_map),
+                    executor.submit(insert_groups_thread, relation_packages, package_id_map),
+                    executor.submit(insert_optdeps_thread, relation_packages, package_id_map),
                 ]
                 for future in as_completed(futures):
                     future.result()  # Raise any exceptions
