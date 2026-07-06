@@ -18,6 +18,7 @@ Layout::header('Orphaned Split Packages');
     <div class="card">
         <h2>👻 Orphaned Split Packages (<?php echo count($packages); ?>)</h2>
         <p style="margin-bottom: 15px; opacity: 0.8;">Split packages without parent package in aarch64</p>
+                <a href="<?php echo Formatter::url('analysis.php'); ?>" class="back-link">← Back to Analysis</a>
 
         <?php if (empty($packages)): ?>
             <div class="alert alert-success">No orphaned packages found! ✓</div>

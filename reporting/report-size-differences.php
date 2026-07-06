@@ -101,6 +101,7 @@ Layout::header('Size Differences');
                 id="search-input" 
                 placeholder="🔍 Search packages by name..." 
                 style="width: 100%; padding: 10px; font-size: 16px; border: 1px solid #333; border-radius: 4px; background: #1a1a1a; color: #fff; margin-bottom: 15px;"
+                <a href="<?php echo Formatter::url('analysis.php'); ?>" class="back-link">← Back to Analysis</a>
             >
         </div>
 

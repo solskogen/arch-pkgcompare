@@ -23,6 +23,7 @@ Layout::header($repo . ' Repository - aarch64 Only Packages');
     <div class="card">
         <h2>✨ <?php echo ucfirst(Formatter::escape($repo)); ?> Repository - aarch64 Only (<?php echo count($packages); ?>)</h2>
         <p style="margin-bottom: 15px; opacity: 0.8;">Packages in this repository on aarch64 but not on x86_64</p>
+                <a href="<?php echo Formatter::url('analysis.php'); ?>" class="back-link">← Back to Analysis</a>
 
         <?php if (empty($packages)): ?>
             <div class="alert alert-success">✓ All packages in <?php echo Formatter::escape($repo); ?> repository are available on both architectures!</div>

@@ -17,6 +17,7 @@ Layout::header('Discrepancies');
 <div class="container">
     <h1 style="margin-bottom: 20px;">📋 License Discrepancies (<?php echo count($discrepancies); ?>)</h1>
     <p style="margin-bottom: 30px; opacity: 0.8;">Packages with different licenses between aarch64 and x86_64</p>
+    <a href="<?php echo Formatter::url('analysis.php'); ?>" class="back-link">← Back to Analysis</a>
 
     <?php if (empty($discrepancies)): ?>
         <div class="card">

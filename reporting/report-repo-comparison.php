@@ -66,6 +66,7 @@ Layout::header('Repository Package Comparison');
             <div style="margin-top: 30px; padding: 15px; background: #1a1a1a; border-radius: 8px; border-left: 4px solid #2196f3;">
                 <h3 style="color: #64b5f6; margin-bottom: 10px;">📋 Details by Repository</h3>
                 <p style="font-size: 13px; opacity: 0.8; margin-bottom: 15px;">
+                <a href="<?php echo Formatter::url('analysis.php'); ?>" class="back-link">← Back to Analysis</a>
                     Click on the package counts to view detailed listings of packages that differ between architectures.
                 </p>
                 

@@ -18,6 +18,7 @@ Layout::header('aarch64 Packages');
     <div class="card">
         <h2>📦 aarch64 Packages (<?php echo count($packages); ?>)</h2>
         <p style="margin-bottom: 15px; opacity: 0.8;">All packages available for aarch64 architecture. Click column headers to sort.</p>
+                <a href="<?php echo Formatter::url('analysis.php'); ?>" class="back-link">← Back to Analysis</a>
 
         <?php if (empty($packages)): ?>
             <div class="alert alert-info">No packages found.</div>

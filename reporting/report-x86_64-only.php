@@ -23,6 +23,7 @@ Layout::header('x86_64 Only Packages');
             <div>
                 <h2>📦 x86_64 Only Packages</h2>
                 <p style="margin: 0; opacity: 0.8;">Packages available in x86_64 but not in aarch64</p>
+    <a href="<?php echo Formatter::url('analysis.php'); ?>" class="back-link">← Back to Analysis</a>
             </div>
             <div>
                 <button 

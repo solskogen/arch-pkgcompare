@@ -18,6 +18,7 @@ Layout::header('aarch64 Newer Versions');
     <div class="card">
         <h2>⬆️ aarch64 Newer Versions (<?php echo count($packages); ?>)</h2>
         <p style="margin-bottom: 15px; opacity: 0.8;">Packages with newer versions in aarch64 than x86_64</p>
+                <a href="<?php echo Formatter::url('analysis.php'); ?>" class="back-link">← Back to Analysis</a>
 
         <?php if (empty($packages)): ?>
             <div class="alert alert-info">No packages found.</div>

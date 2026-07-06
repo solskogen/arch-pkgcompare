@@ -18,6 +18,7 @@ Layout::header('Missing -any Packages');
     <div class="card">
         <h2>❌ Missing -any Packages (<?php echo count($packages); ?>)</h2>
         <p style="margin-bottom: 15px; opacity: 0.8;">-any packages available in x86_64 but missing in aarch64</p>
+                <a href="<?php echo Formatter::url('analysis.php'); ?>" class="back-link">← Back to Analysis</a>
 
         <?php if (empty($packages)): ?>
             <div class="alert alert-success">All -any packages are present! ✓</div>

@@ -40,6 +40,7 @@ Layout::header('x86_64 Only (Excluding Provides)');
             <?php foreach ($grouped as $base => $info): ?>
                 <div class="pkgbase-group" data-base="<?php echo Formatter::escape($base); ?>" style="margin-bottom: 20px; border: 1px solid #333; border-radius: 8px; padding: 15px; background: #0a0a0a;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <a href="<?php echo Formatter::url('analysis.php'); ?>" class="back-link">← Back to Analysis</a>
                         <div>
                             <h3 style="color: #90caf9; margin: 0; display: inline-block; margin-right: 10px;"><?php echo Formatter::escape($base); ?></h3>
                             <?php if ($info['has_aarch64']): ?>

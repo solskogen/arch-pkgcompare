@@ -18,6 +18,7 @@ Layout::header('aarch64 Only Packages');
     <div class="card">
         <h2>✨ aarch64 Only Packages (<?php echo count($packages); ?>)</h2>
         <p style="margin-bottom: 15px; opacity: 0.8;">Packages available in aarch64 but not in x86_64</p>
+                <a href="<?php echo Formatter::url('analysis.php'); ?>" class="back-link">← Back to Analysis</a>
 
         <?php if (empty($packages)): ?>
             <div class="alert alert-info">No packages found.</div>

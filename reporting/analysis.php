@@ -12,9 +12,9 @@ function getAnalysisCacheVersion($db) {
     $result = $db->query("SELECT id, import_timestamp FROM import_metadata ORDER BY id DESC LIMIT 1");
     if ($result && $result->num_rows > 0) {
         $row = $result->fetch_assoc();
-        return $row['id'] . ':' . $row['import_timestamp'];
+        return 'analysis-v2:' . $row['id'] . ':' . $row['import_timestamp'];
     }
-    return 'bootstrap';
+    return 'analysis-v2:bootstrap';
 }
 
 $cache = new Cache(3600); // 1 hour cache
@@ -39,57 +39,50 @@ try {
         $stats = $repo->getStats();
         $cache->set($statsCacheKey, $stats);
     }
-    
-    // Cache these counts as well if not cached
-    $counts = null;
-    if (!$bypassCache) {
-        $countsA = $cache->get($countsCacheKeyA);
-        $countsB = $cache->get($countsCacheKeyB);
-        $countsC = $cache->get($countsCacheKeyC);
-        if ($countsA !== null && $countsB !== null && $countsC !== null) {
-            $counts = array_merge($countsA, $countsB, $countsC);
-        }
+
+    // Each counts segment is cached and recomputed independently.
+    $countsA = !$bypassCache ? $cache->get($countsCacheKeyA) : null;
+    if ($countsA === null) {
+        $countsA = [
+            'repo_diff' => $repo->countRepoDifferences(),
+            'dep_diff'  => $repo->countDependencyDifferences(),
+        ];
+        $cache->set($countsCacheKeyA, $countsA);
     }
 
-    if ($counts === null) {
-        $counts = [
-            'repo_diff' => $repo->countRepoDifferences(),
-            'dep_diff' => $repo->countDependencyDifferences(),
+    $countsB = !$bypassCache ? $cache->get($countsCacheKeyB) : null;
+    if ($countsB === null) {
+        $countsB = [
             'provides_diff' => $repo->countProvidesDifferences(),
-            'optdep_diff' => $repo->countOptionalDepDifferences(),
-            'makedep_diff' => $repo->countMakedepDifferences(),
-            'group_diff' => $repo->countGroupDifferences(),
-            'conflict_diff' => $repo->countConflictDifferences(),
-            'replace_diff' => $repo->countReplaceDifferences(),
-            'cycle_counts' => $repo->countCyclesByLength(),
+            'optdep_diff'   => $repo->countOptionalDepDifferences(),
+            'makedep_diff'  => $repo->countMakedepDifferences(),
         ];
-        $cache->set($countsCacheKeyA, [
-            'repo_diff' => $counts['repo_diff'],
-            'dep_diff' => $counts['dep_diff'],
-        ]);
-        $cache->set($countsCacheKeyB, [
-            'provides_diff' => $counts['provides_diff'],
-            'optdep_diff' => $counts['optdep_diff'],
-            'makedep_diff' => $counts['makedep_diff'],
-        ]);
-        $cache->set($countsCacheKeyC, [
-            'group_diff' => $counts['group_diff'],
-            'conflict_diff' => $counts['conflict_diff'],
-            'replace_diff' => $counts['replace_diff'],
-            'cycle_counts' => $counts['cycle_counts'],
-        ]);
+        $cache->set($countsCacheKeyB, $countsB);
     }
-    
-    $repo_diff_count = $counts['repo_diff'];
-    $dep_diff_count = $counts['dep_diff'];
+
+    $countsC = !$bypassCache ? $cache->get($countsCacheKeyC) : null;
+    if ($countsC === null) {
+        $countsC = [
+            'group_diff'    => $repo->countGroupDifferences(),
+            'conflict_diff' => $repo->countConflictDifferences(),
+            'replace_diff'  => $repo->countReplaceDifferences(),
+            'cycle_counts'  => $repo->countCyclesByLength(),
+        ];
+        $cache->set($countsCacheKeyC, $countsC);
+    }
+
+    $counts = array_merge($countsA, $countsB, $countsC);
+
+    $repo_diff_count    = $counts['repo_diff'];
+    $dep_diff_count     = $counts['dep_diff'];
     $provides_diff_count = $counts['provides_diff'];
-    $optdep_diff_count = $counts['optdep_diff'];
+    $optdep_diff_count  = $counts['optdep_diff'];
     $makedep_diff_count = $counts['makedep_diff'];
-    $group_diff_count = $counts['group_diff'];
+    $group_diff_count   = $counts['group_diff'];
     $conflict_diff_count = $counts['conflict_diff'];
     $replace_diff_count = $counts['replace_diff'];
-    $cycle_counts = $counts['cycle_counts'];
-    $circular_count = array_sum($cycle_counts);
+    $cycle_counts       = $counts['cycle_counts'];
+    $circular_count     = array_sum($cycle_counts);
 } catch (Exception $e) {
     die("Error: " . $e->getMessage());
 }
@@ -147,7 +140,7 @@ $reports = [
         'title' => 'Outdated -any Packages',
         'description' => 'Architecture-independent packages outdated in aarch64',
         'url' => Formatter::url('report-outdated-any.php'),
-        'count' => 0,
+        'count' => $stats['outdated_any_count'],
         'icon' => '🔄',
         'color' => 'warning'
     ],
@@ -155,7 +148,7 @@ $reports = [
         'title' => 'Missing -any Packages',
         'description' => '-any packages missing in aarch64',
         'url' => Formatter::url('report-missing-any.php'),
-        'count' => 0,
+        'count' => $stats['missing_any_count'],
         'icon' => '❌',
         'color' => 'error'
     ],
@@ -163,7 +156,7 @@ $reports = [
         'title' => '-any Package Differences',
         'description' => 'Architecture-independent packages that differ between aarch64 and x86_64',
         'url' => Formatter::url('report-any-differences.php'),
-        'count' => 0,
+        'count' => $stats['any_diff_count'],
         'icon' => '📦',
         'color' => 'info'
     ],
@@ -171,7 +164,7 @@ $reports = [
         'title' => 'Repository Differences',
         'description' => 'Packages in different repos between architectures',
         'url' => Formatter::url('report-repo-diffs.php'),
-        'count' => 0,
+        'count' => $stats['repo_diff_list_count'],
         'icon' => '📚',
         'color' => 'info'
     ],
@@ -195,7 +188,7 @@ $reports = [
         'title' => 'Orphaned Split Packages',
         'description' => 'Split packages without parent in aarch64',
         'url' => Formatter::url('report-orphaned.php'),
-        'count' => 0,
+        'count' => $stats['orphaned_count'],
         'icon' => '👻',
         'color' => 'error'
     ],
@@ -203,7 +196,7 @@ $reports = [
         'title' => 'Package Size Differences',
         'description' => 'Compare compressed package sizes between aarch64 and x86_64',
         'url' => Formatter::url('report-size-differences.php'),
-        'count' => 0,
+        'count' => $stats['size_diff_count'],
         'icon' => '📊',
         'color' => 'info'
     ],

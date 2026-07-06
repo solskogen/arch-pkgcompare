@@ -6,9 +6,28 @@
 class PackageRepository {
     private $db;
     private $architectures_cache = null;
+    public $primaryArch;    // first system arch alphabetically (e.g. 'aarch64')
+    public $referenceArch;  // second system arch alphabetically (e.g. 'x86_64')
 
     public function __construct(Database $db) {
         $this->db = $db;
+        $this->loadSystemArchitectures();
+    }
+
+    /**
+     * Load the two system architectures from the packages table.
+     * Falls back to aarch64/x86_64 if the DB is empty.
+     */
+    private function loadSystemArchitectures() {
+        $result = $this->db->query(
+            "SELECT DISTINCT system_arch FROM packages ORDER BY system_arch ASC LIMIT 2"
+        );
+        $archs = [];
+        while ($row = $result->fetch_assoc()) {
+            $archs[] = $row['system_arch'];
+        }
+        $this->primaryArch   = $archs[0] ?? 'aarch64';
+        $this->referenceArch = $archs[1] ?? 'x86_64';
     }
 
     /**
@@ -448,6 +467,11 @@ class PackageRepository {
             'outdated_non_any_count' => $this->countOutdatedNonAny(),
             'outdated_any_count' => $this->countOutdatedAny(),
             'license_discrepancies_count' => $this->countLicenseDiscrepancies(),
+            'missing_any_count' => $this->countMissingAnyPackages(),
+            'any_diff_count' => $this->countAnyPackageDifferences(),
+            'repo_diff_list_count' => $this->countRepoDifferencesList(),
+            'orphaned_count' => $this->countOrphanedSplitPackages(),
+            'size_diff_count' => $this->countSizeDifferences(),
         ];
     }
 
@@ -480,21 +504,97 @@ class PackageRepository {
     }
 
     private function countAarch64Newer() {
-        return $this->db->fetchOne("
-            SELECT COUNT(DISTINCT a.name) as count FROM packages a
-            INNER JOIN packages x ON a.name = x.name
-            WHERE a.system_arch = 'aarch64' AND x.system_arch = 'x86_64'
-            AND a.version > x.version
-        ")['count'];
+        return count($this->getAarch64Newer());
     }
 
     private function countX86_64Newer() {
+        return count($this->getX86_64Newer());
+    }
+
+    private function countMissingAnyPackages() {
         return $this->db->fetchOne("
-            SELECT COUNT(DISTINCT x.name) as count FROM packages x
-            INNER JOIN packages a ON x.name = a.name
-            WHERE x.system_arch = 'x86_64' AND a.system_arch = 'aarch64'
-            AND x.version > a.version
-        ")['count'];
+            SELECT COUNT(DISTINCT x.name) as count
+            FROM packages x
+            JOIN architectures arch ON x.arch_id = arch.id
+            LEFT JOIN packages a ON x.name = a.name AND a.system_arch = '{$this->primaryArch}'
+            WHERE x.system_arch = '{$this->referenceArch}'
+            AND arch.name = 'any'
+            AND a.id IS NULL
+        ")['count'] ?? 0;
+    }
+
+    private function countAnyPackageDifferences() {
+        return $this->db->fetchOne("
+            SELECT
+                (SELECT COUNT(DISTINCT p.name)
+                 FROM packages p
+                 JOIN architectures a ON p.arch_id = a.id
+                 WHERE a.name = 'any' AND p.system_arch = '{$this->primaryArch}'
+                   AND p.name NOT IN (
+                       SELECT DISTINCT p2.name FROM packages p2
+                       JOIN architectures a2 ON p2.arch_id = a2.id
+                       WHERE a2.name = 'any' AND p2.system_arch = '{$this->referenceArch}'
+                   )
+                )
+                +
+                (SELECT COUNT(DISTINCT p.name)
+                 FROM packages p
+                 JOIN architectures a ON p.arch_id = a.id
+                 WHERE a.name = 'any' AND p.system_arch = '{$this->referenceArch}'
+                   AND p.name NOT IN (
+                       SELECT DISTINCT p2.name FROM packages p2
+                       JOIN architectures a2 ON p2.arch_id = a2.id
+                       WHERE a2.name = 'any' AND p2.system_arch = '{$this->primaryArch}'
+                   )
+                ) AS count
+        ")['count'] ?? 0;
+    }
+
+    private function countRepoDifferencesList() {
+        return $this->db->fetchOne("
+            SELECT COUNT(DISTINCT a.name) as count FROM (
+                SELECT DISTINCT p.name, r.name as repo
+                FROM packages p JOIN repositories r ON p.repo_id = r.id
+                WHERE p.system_arch = '{$this->primaryArch}'
+            ) a
+            INNER JOIN (
+                SELECT DISTINCT p.name, r.name as repo
+                FROM packages p JOIN repositories r ON p.repo_id = r.id
+                WHERE p.system_arch = '{$this->referenceArch}'
+            ) x ON a.name = x.name
+            WHERE a.repo != x.repo
+        ")['count'] ?? 0;
+    }
+
+    private function countOrphanedSplitPackages() {
+        return $this->db->fetchOne("
+            SELECT COUNT(DISTINCT p.name) as count
+            FROM packages p
+            WHERE p.system_arch = '{$this->primaryArch}'
+            AND p.name != p.base
+            AND p.base IS NOT NULL
+            AND p.base NOT IN (
+                SELECT DISTINCT name FROM packages WHERE system_arch = '{$this->primaryArch}'
+            )
+            AND p.base IN (
+                SELECT DISTINCT name FROM packages WHERE system_arch = '{$this->referenceArch}'
+            )
+        ")['count'] ?? 0;
+    }
+
+    private function countSizeDifferences() {
+        // Matches the 10 MB filter applied in report-size-differences.php
+        $minBytes = 10 * 1024 * 1024;
+        return $this->db->fetchOne("
+            SELECT COUNT(*) as count FROM (
+                SELECT p1.name
+                FROM packages p1
+                INNER JOIN packages p2 ON p1.name = p2.name
+                WHERE p1.system_arch = '{$this->primaryArch}'
+                AND p2.system_arch = '{$this->referenceArch}'
+                AND (p1.isize >= {$minBytes} OR p2.isize >= {$minBytes})
+            ) t
+        ")['count'] ?? 0;
     }
 
     private function countOutdated() {

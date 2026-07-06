@@ -21,9 +21,9 @@ function getAnalysisCacheVersion($db) {
     $result = $db->query("SELECT id, import_timestamp FROM import_metadata ORDER BY id DESC LIMIT 1");
     if ($result && $result->num_rows > 0) {
         $row = $result->fetch_assoc();
-        return $row['id'] . ':' . $row['import_timestamp'];
+        return 'analysis-v2:' . $row['id'] . ':' . $row['import_timestamp'];
     }
-    return 'bootstrap';
+    return 'analysis-v2:bootstrap';
 }
 
 $version = getAnalysisCacheVersion($db);
@@ -40,29 +40,29 @@ switch ($segment) {
     case 'counts-a':
         $cache->set($countsKeyA, [
             'repo_diff' => $repo->countRepoDifferences(),
-            'dep_diff' => $repo->countDependencyDifferences(),
+            'dep_diff'  => $repo->countDependencyDifferences(),
         ]);
         break;
     case 'counts-b':
         $cache->set($countsKeyB, [
             'provides_diff' => $repo->countProvidesDifferences(),
-            'optdep_diff' => $repo->countOptionalDepDifferences(),
-            'makedep_diff' => $repo->countMakedepDifferences(),
+            'optdep_diff'   => $repo->countOptionalDepDifferences(),
+            'makedep_diff'  => $repo->countMakedepDifferences(),
         ]);
         break;
     case 'counts-c':
         $cache->set($countsKeyC, [
-            'group_diff' => $repo->countGroupDifferences(),
+            'group_diff'    => $repo->countGroupDifferences(),
             'conflict_diff' => $repo->countConflictDifferences(),
-            'replace_diff' => $repo->countReplaceDifferences(),
-            'cycle_counts' => $repo->countCyclesByLength(),
+            'replace_diff'  => $repo->countReplaceDifferences(),
+            'cycle_counts'  => $repo->countCyclesByLength(),
         ]);
         break;
     case 'all':
         $cache->set($statsKey, $repo->getStats());
         $cache->set($countsKeyA, [
-            'repo_diff'     => $repo->countRepoDifferences(),
-            'dep_diff'      => $repo->countDependencyDifferences(),
+            'repo_diff' => $repo->countRepoDifferences(),
+            'dep_diff'  => $repo->countDependencyDifferences(),
         ]);
         $cache->set($countsKeyB, [
             'provides_diff' => $repo->countProvidesDifferences(),

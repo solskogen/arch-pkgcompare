@@ -923,7 +923,7 @@ Layout::header('Package: ' . htmlspecialchars($pkg_name));
         <?php endif; ?>
         
         <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #333;">
-            <a href="<?php echo Formatter::url('analysis.php'); ?>" style="color: #64b5f6;">← Back to Analysis</a>
+            <a href="<?php echo Formatter::url('analysis.php'); ?>" class="back-link">← Back to Analysis</a>
         </div>
     </div>
 </div>

@@ -18,6 +18,7 @@ Layout::header('Outdated -any Packages');
     <div class="card">
         <h2>🔄 Outdated -any Packages (<?php echo count($packages); ?>)</h2>
         <p style="margin-bottom: 15px; opacity: 0.8;">-any packages that are outdated in aarch64</p>
+                <a href="<?php echo Formatter::url('analysis.php'); ?>" class="back-link">← Back to Analysis</a>
 
         <?php if (empty($packages)): ?>
             <div class="alert alert-success">All -any packages are up-to-date! ✓</div>

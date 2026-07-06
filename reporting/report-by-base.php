@@ -53,6 +53,7 @@ Layout::header('Packages with Base: ' . $baseName);
 <div class="container">
     <h1 style="margin-bottom: 20px;">📦 Packages with Base: <strong><?php echo Formatter::escape($baseName); ?></strong></h1>
     <p style="margin-bottom: 30px; opacity: 0.8;">Split packages created from the same source (base)</p>
+    <a href="<?php echo Formatter::url('analysis.php'); ?>" class="back-link">← Back to Analysis</a>
 
     <?php if (empty($aarch64Packages) && empty($x86_64Packages)): ?>
         <div class="card">

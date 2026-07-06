@@ -36,6 +36,7 @@ Layout::header('-any Package Differences');
         <?php if (!empty($aarch64_only)): ?>
         <div style="margin-bottom: 40px;">
             <h3 style="color: #51cf66; margin-bottom: 15px;">✨ aarch64 Only -any Packages</h3>
+                <a href="<?php echo Formatter::url('analysis.php'); ?>" class="back-link">← Back to Analysis</a>
             <div style="overflow-x: auto;">
                 <table>
                     <thead>
@@ -72,6 +73,7 @@ Layout::header('-any Package Differences');
         <?php if (!empty($x86_64_only)): ?>
         <div style="margin-bottom: 40px;">
             <h3 style="color: #ff6b6b; margin-bottom: 15px;">⚠️ x86_64 Only -any Packages</h3>
+                <a href="<?php echo Formatter::url('analysis.php'); ?>" class="back-link">← Back to Analysis</a>
             <div style="overflow-x: auto;">
                 <table>
                     <thead>

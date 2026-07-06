@@ -18,6 +18,7 @@ Layout::header('Package Name Mismatches');
     <div class="card">
         <h2>📦 Package Base Mismatches (<?php echo count($mismatches); ?>)</h2>
         <p style="margin-bottom: 15px; opacity: 0.8;">Packages from the wrong base (pkgbase) on aarch64</p>
+                <a href="<?php echo Formatter::url('analysis.php'); ?>" class="back-link">← Back to Analysis</a>
 
         <?php if (empty($mismatches)): ?>
             <div class="alert alert-info">No mismatches found.</div>

@@ -1,10 +1,113 @@
 <?php
-require_once 'boot.php';
+require_once __DIR__ . '/app/Database.php';
+require_once __DIR__ . '/app/PackageRepository.php';
+require_once __DIR__ . '/app/Helpers.php';
 
-$conn = getDbConnection();
-
-// Get the filter type from URL
 $type = $_GET['type'] ?? 'aarch64-only';
+
+try {
+    $db = Database::getInstance();
+    $repo = new PackageRepository($db);
+
+    if ($type === 'aarch64-only') {
+        $packages = $db->fetchAll("
+            SELECT p.id, p.name, p.version, r.name as repo, p.filename, p.isize, p.base,
+                   CASE WHEN p.base IS NOT NULL AND p.base != p.name AND
+                        EXISTS (SELECT 1 FROM packages p2 WHERE p2.name = p.base AND p2.system_arch = '{$repo->referenceArch}')
+                        THEN 'provided_by_base' ELSE 'true_unique' END as uniqueness_type
+            FROM packages p
+            JOIN repositories r ON p.repo_id = r.id
+            WHERE p.system_arch = '{$repo->primaryArch}'
+            AND p.name NOT IN (SELECT DISTINCT name FROM packages WHERE system_arch = '{$repo->referenceArch}')
+            ORDER BY r.name, p.name
+        ");
+        $page_title = $repo->primaryArch . '-Only Packages';
+        $page_description = 'Packages available only on ' . $repo->primaryArch;
+    } elseif ($type === 'x86_64-only') {
+        $packages = $db->fetchAll("
+            SELECT p.id, p.name, p.version, r.name as repo, p.filename, p.isize, p.base,
+                   CASE WHEN p.base IS NOT NULL AND p.base != p.name AND
+                        EXISTS (SELECT 1 FROM packages p2 WHERE p2.name = p.base AND p2.system_arch = '{$repo->primaryArch}')
+                        THEN 'provided_by_base' ELSE 'true_unique' END as uniqueness_type
+            FROM packages p
+            JOIN repositories r ON p.repo_id = r.id
+            WHERE p.system_arch = '{$repo->referenceArch}'
+            AND p.name NOT IN (SELECT DISTINCT name FROM packages WHERE system_arch = '{$repo->primaryArch}')
+            ORDER BY r.name, p.name
+        ");
+        $page_title = $repo->referenceArch . '-Only Packages';
+        $page_description = 'Packages available only on ' . $repo->referenceArch;
+    } else {
+        $packages = [];
+        $page_title = 'Packages';
+        $page_description = 'Package listings';
+    }
+} catch (Exception $e) {
+    die("Error: " . $e->getMessage());
+}
+
+Layout::header($page_title);
+?>
+
+<div class="container">
+    <div class="card">
+        <h2>📦 <?php echo Formatter::escape($page_title); ?> (<?php echo count($packages); ?>)</h2>
+        <p class="card-subtitle"><?php echo Formatter::escape($page_description); ?></p>
+
+        <a href="<?php echo Formatter::url('analysis.php'); ?>" class="back-link">← Back to Analysis</a>
+
+        <div class="info-box">
+            <strong><?php echo count($packages); ?> packages</strong> found
+            <br>
+            <small>💡 <em>Some packages listed here are "split packages" of a base package that exists in both architectures.</em></small>
+        </div>
+
+        <?php if (!empty($packages)): ?>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Package Name</th>
+                        <th>Version</th>
+                        <th>Repository</th>
+                        <th>Installed Size</th>
+                        <th>Filename</th>
+                        <th>Notes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($packages as $pkg):
+                        $repo_class = 'repo-' . strtolower($pkg['repo']);
+                        $is_split = $pkg['uniqueness_type'] === 'provided_by_base';
+                    ?>
+                    <tr<?php echo $is_split ? ' class="row-dimmed"' : ''; ?>>
+                        <td>
+                            <a href="<?php echo Formatter::url('package-detail.php', ['name' => $pkg['name']]); ?>">
+                                <?php echo Formatter::escape($pkg['name']); ?>
+                            </a>
+                        </td>
+                        <td><?php echo Formatter::escape($pkg['version']); ?></td>
+                        <td><span class="badge repo-badge <?php echo $repo_class; ?>"><?php echo Formatter::escape($pkg['repo']); ?></span></td>
+                        <td><?php echo Formatter::size($pkg['isize']); ?></td>
+                        <td class="text-muted text-small"><?php echo Formatter::escape($pkg['filename']); ?></td>
+                        <td>
+                            <?php if ($is_split): ?>
+                                <span class="badge badge-warning">Split of <?php echo Formatter::escape($pkg['base']); ?></span>
+                            <?php else: ?>
+                                <span class="text-muted">—</span>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        <?php else: ?>
+            <div class="alert alert-success">✓ No packages found</div>
+        <?php endif; ?>
+    </div>
+</div>
+
+<?php Layout::footer();
+
 
 // Determine query based on type
 if ($type === 'aarch64-only') {

@@ -18,6 +18,7 @@ Layout::header('Repository Differences');
     <div class="card">
         <h2>📚 Repository Differences (<?php echo count($diffs); ?>)</h2>
         <p style="margin-bottom: 15px; opacity: 0.8;">Packages in the wrong repository on aarch64</p>
+                <a href="<?php echo Formatter::url('analysis.php'); ?>" class="back-link">← Back to Analysis</a>
 
         <?php if (empty($diffs)): ?>
             <div class="alert alert-info">No repository differences found.</div>
