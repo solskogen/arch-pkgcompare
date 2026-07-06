@@ -7,135 +7,207 @@ try {
     $db = Database::getInstance();
     $repo = new PackageRepository($db);
     $stats = $repo->getStats();
-    
-    // Calculate counts for outdated and ahead packages
-    $all_packages = $db->fetchAll("
-        SELECT DISTINCT 
-            a.name, a.version as aarch64_version, x.version as x86_64_version
-        FROM packages a
-        INNER JOIN packages x ON a.name = x.name
-        WHERE a.system_arch = 'aarch64' AND x.system_arch = 'x86_64'
-    ");
-    
-    $outdated_count = count(array_filter($all_packages, function($pkg) {
-        return version_compare($pkg['aarch64_version'], $pkg['x86_64_version'], '<');
-    }));
-    
-    $ahead_count = count(array_filter($all_packages, function($pkg) {
-        return version_compare($pkg['x86_64_version'], $pkg['aarch64_version'], '<');
-    }));
+
+    $row = $db->fetchOne("SELECT import_timestamp FROM import_metadata ORDER BY id DESC LIMIT 1");
+    $last_updated = $row['import_timestamp'] ?? null;
 } catch (Exception $e) {
     error_log("Error in index.php: " . $e->getMessage(), 3, "/var/log/reporting.log");
     die("An internal error occurred. Please contact support.");
 }
 
-Layout::header('Arch Linux Package Reporting');
+$arch1 = $repo->primaryArch;
+$arch2 = $repo->referenceArch;
+
+Layout::header('Arch Linux Package Comparison');
 ?>
 
+<div class="home-hero">
+    <div class="container">
+        <h1 class="home-hero__title">📦 Arch Linux Package Comparison</h1>
+        <p class="home-hero__subtitle">
+            <?php echo Formatter::escape(strtoupper($arch1)); ?> vs <?php echo Formatter::escape(strtoupper($arch2)); ?> — package ecosystem analysis
+        </p>
+        <?php if ($last_updated): ?>
+        <p class="home-hero__updated">Last import: <?php echo Formatter::escape($last_updated); ?></p>
+        <?php endif; ?>
+        <div class="home-hero__actions">
+            <a href="<?php echo Formatter::url('analysis.php'); ?>" class="btn btn-primary">View Analysis Dashboard</a>
+            <a href="<?php echo Formatter::url('comparison.php'); ?>" class="btn btn-secondary">Detailed Comparison</a>
+        </div>
+    </div>
+</div>
+
 <div class="container">
-    <div class="card">
-        <h2>🏠 Welcome to Arch Linux Package Reporting</h2>
-        <p style="margin-bottom: 20px; opacity: 0.9;">
-            This tool analyzes and compares Arch Linux packages across aarch64 and x86_64 architectures.
-            Browse the analysis reports to find inconsistencies, version differences, and architectural gaps.
-        </p>
+
+    <!-- Key numbers -->
+    <div class="home-stats">
+        <a href="<?php echo Formatter::url('report-packages-aarch64.php'); ?>" class="home-stat">
+            <span class="home-stat__value"><?php echo Formatter::number($stats['aarch64_packages']); ?></span>
+            <span class="home-stat__label"><?php echo Formatter::escape($arch1); ?> packages</span>
+        </a>
+        <a href="<?php echo Formatter::url('report-packages-x86_64.php'); ?>" class="home-stat">
+            <span class="home-stat__value"><?php echo Formatter::number($stats['x86_64_packages']); ?></span>
+            <span class="home-stat__label"><?php echo Formatter::escape($arch2); ?> packages</span>
+        </a>
+        <a href="<?php echo Formatter::url('report-aarch64-only.php'); ?>" class="home-stat home-stat--warn">
+            <span class="home-stat__value"><?php echo Formatter::number($stats['aarch64_only_count']); ?></span>
+            <span class="home-stat__label"><?php echo Formatter::escape($arch1); ?> only</span>
+        </a>
+        <a href="<?php echo Formatter::url('report-x86_64-only.php'); ?>" class="home-stat home-stat--warn">
+            <span class="home-stat__value"><?php echo Formatter::number($stats['x86_64_only_count']); ?></span>
+            <span class="home-stat__label"><?php echo Formatter::escape($arch2); ?> only</span>
+        </a>
+        <a href="<?php echo Formatter::url('report-newer-versions.php'); ?>" class="home-stat home-stat--info">
+            <span class="home-stat__value"><?php echo Formatter::number($stats['aarch64_newer_count']); ?></span>
+            <span class="home-stat__label"><?php echo Formatter::escape($arch1); ?> ahead</span>
+        </a>
+        <a href="<?php echo Formatter::url('report-x86_64-newer.php'); ?>" class="home-stat home-stat--info">
+            <span class="home-stat__value"><?php echo Formatter::number($stats['x86_64_newer_count']); ?></span>
+            <span class="home-stat__label"><?php echo Formatter::escape($arch2); ?> ahead</span>
+        </a>
     </div>
 
-    <div class="card">
-        <h2>📊 Quick Statistics</h2>
-        <div class="stats-grid">
-            <a href="<?php echo Formatter::url('report-packages-aarch64.php'); ?>" style="text-decoration: none;">
-                <div class="stat-box">
-                    <div class="value"><?php echo Formatter::number($stats['aarch64_packages']); ?></div>
-                    <div class="label">aarch64 Packages</div>
-                </div>
-            </a>
-            <a href="<?php echo Formatter::url('report-packages-x86_64.php'); ?>" style="text-decoration: none;">
-                <div class="stat-box">
-                    <div class="value"><?php echo Formatter::number($stats['x86_64_packages']); ?></div>
-                    <div class="label">x86_64 Packages</div>
-                </div>
-            </a>
-            <a href="<?php echo Formatter::url('report-x86_64-only.php'); ?>" style="text-decoration: none;">
-                <div class="stat-box">
-                    <div class="value"><?php echo Formatter::number($stats['x86_64_only_count']); ?></div>
-                    <div class="label">x86_64 Only</div>
-                </div>
-            </a>
-            <a href="<?php echo Formatter::url('report-aarch64-only.php'); ?>" style="text-decoration: none;">
-                <div class="stat-box">
-                    <div class="value"><?php echo Formatter::number($stats['aarch64_only_count']); ?></div>
-                    <div class="label">aarch64 Only</div>
-                </div>
-            </a>
-            <a href="<?php echo Formatter::url('analysis.php'); ?>" style="text-decoration: none;">
-                <div class="stat-box">
-                    <div class="value"><?php echo Formatter::number($stats['aarch64_size_mb']); ?> MB</div>
-                    <div class="label">aarch64 Compressed Size</div>
-                </div>
-            </a>
-            <a href="<?php echo Formatter::url('analysis.php'); ?>" style="text-decoration: none;">
-                <div class="stat-box">
-                    <div class="value"><?php echo Formatter::number($stats['x86_64_size_mb']); ?> MB</div>
-                    <div class="label">x86_64 Compressed Size</div>
-                </div>
-            </a>
-            <a href="<?php echo Formatter::url('report-outdated.php'); ?>" style="text-decoration: none;">
-                <div class="stat-box">
-                    <div class="value"><?php echo Formatter::number($outdated_count); ?></div>
-                    <div class="label">aarch64 Outdated</div>
-                </div>
-            </a>
-            <a href="<?php echo Formatter::url('report-aarch64-ahead.php'); ?>" style="text-decoration: none;">
-                <div class="stat-box">
-                    <div class="value"><?php echo Formatter::number($ahead_count); ?></div>
-                    <div class="label">aarch64 Ahead</div>
-                </div>
-            </a>
-            <a href="<?php echo Formatter::url('report-outdated-any.php'); ?>" style="text-decoration: none;">
-                <div class="stat-box">
-                    <div class="value"><?php echo Formatter::number($stats['outdated_any_count']); ?></div>
-                    <div class="label">-any Outdated</div>
-                </div>
-            </a>
+    <!-- Report groups -->
+    <div class="home-groups">
+
+        <div class="home-group">
+            <h2 class="home-group__title">📋 Package Availability</h2>
+            <div class="home-group__links">
+                <a href="<?php echo Formatter::url('report-aarch64-only.php'); ?>" class="home-link">
+                    <span class="home-link__icon">✨</span>
+                    <span class="home-link__text">
+                        <strong><?php echo Formatter::escape($arch1); ?>-only packages</strong>
+                        <em><?php echo Formatter::number($stats['aarch64_only_count']); ?> packages not in <?php echo Formatter::escape($arch2); ?></em>
+                    </span>
+                </a>
+                <a href="<?php echo Formatter::url('report-x86_64-only.php'); ?>" class="home-link">
+                    <span class="home-link__icon">⚠️</span>
+                    <span class="home-link__text">
+                        <strong><?php echo Formatter::escape($arch2); ?>-only packages</strong>
+                        <em><?php echo Formatter::number($stats['x86_64_only_count']); ?> packages not in <?php echo Formatter::escape($arch1); ?></em>
+                    </span>
+                </a>
+                <a href="<?php echo Formatter::url('report-x86_64-only-provides.php'); ?>" class="home-link">
+                    <span class="home-link__icon">🔍</span>
+                    <span class="home-link__text">
+                        <strong><?php echo Formatter::escape($arch2); ?>-only (excl. provides)</strong>
+                        <em><?php echo Formatter::number($stats['x86_64_only_not_provided_count'] ?? 0); ?> truly missing packages</em>
+                    </span>
+                </a>
+                <a href="<?php echo Formatter::url('report-mismatches.php'); ?>" class="home-link">
+                    <span class="home-link__icon">📦</span>
+                    <span class="home-link__text">
+                        <strong>Package base mismatches</strong>
+                        <em><?php echo Formatter::number($stats['mismatches_count']); ?> split package differences</em>
+                    </span>
+                </a>
+            </div>
         </div>
-    </div>
 
-    <div class="card">
-        <h2>📋 Available Tools</h2>
-        <p style="margin-bottom: 15px; opacity: 0.8;">Choose an option below to get started:</p>
-        
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px;">
-            <a href="<?php echo Formatter::url('analysis.php'); ?>" style="text-decoration: none;">
-                <div style="border: 1px solid #333; border-radius: 8px; padding: 15px; background: #1a1a1a; transition: all 0.3s; cursor: pointer; hover-transition: 0.3s;">
-                    <div style="font-size: 24px; margin-bottom: 10px;">📈</div>
-                    <h3 style="color: #90caf9; margin-bottom: 5px;">Package Analysis</h3>
-                    <p style="font-size: 13px; opacity: 0.7;">
-                        Browse detailed analysis reports including mismatches, outdated packages, and version differences
-                    </p>
-                </div>
-            </a>
-            
-            <a href="<?php echo Formatter::url('comparison.php'); ?>" style="text-decoration: none;">
-                <div style="border: 1px solid #333; border-radius: 8px; padding: 15px; background: #1a1a1a; transition: all 0.3s; cursor: pointer;">
-                    <div style="font-size: 24px; margin-bottom: 10px;">⚖️</div>
-                    <h3 style="color: #90caf9; margin-bottom: 5px;">Detailed Comparison</h3>
-                    <p style="font-size: 13px; opacity: 0.7;">
-                        Compare specific packages across architectures with detailed version and size information
-                    </p>
-                </div>
-            </a>
+        <div class="home-group">
+            <h2 class="home-group__title">⬆️ Version Differences</h2>
+            <div class="home-group__links">
+                <a href="<?php echo Formatter::url('report-newer-versions.php'); ?>" class="home-link">
+                    <span class="home-link__icon">🚀</span>
+                    <span class="home-link__text">
+                        <strong><?php echo Formatter::escape($arch1); ?> newer versions</strong>
+                        <em><?php echo Formatter::number($stats['aarch64_newer_count']); ?> packages ahead of <?php echo Formatter::escape($arch2); ?></em>
+                    </span>
+                </a>
+                <a href="<?php echo Formatter::url('report-x86_64-newer.php'); ?>" class="home-link">
+                    <span class="home-link__icon">🐢</span>
+                    <span class="home-link__text">
+                        <strong><?php echo Formatter::escape($arch2); ?> newer versions</strong>
+                        <em><?php echo Formatter::number($stats['x86_64_newer_count']); ?> packages behind <?php echo Formatter::escape($arch2); ?></em>
+                    </span>
+                </a>
+                <a href="<?php echo Formatter::url('report-outdated-any.php'); ?>" class="home-link">
+                    <span class="home-link__icon">🔄</span>
+                    <span class="home-link__text">
+                        <strong>Outdated -any packages</strong>
+                        <em><?php echo Formatter::number($stats['outdated_any_count']); ?> arch-independent packages outdated</em>
+                    </span>
+                </a>
+                <a href="<?php echo Formatter::url('report-size-differences.php'); ?>" class="home-link">
+                    <span class="home-link__icon">📊</span>
+                    <span class="home-link__text">
+                        <strong>Package size differences</strong>
+                        <em><?php echo Formatter::number($stats['size_diff_count']); ?> packages with notable size gaps</em>
+                    </span>
+                </a>
+            </div>
         </div>
-    </div>
 
-    <div class="card">
-        <h2>ℹ️ About This Tool</h2>
-        <p>
-            This reporting system provides comprehensive analysis of the Arch Linux package ecosystem,
-            comparing build artifacts, versions, and availability across aarch64 and x86_64 platforms.
-            Use this to identify maintenance issues, missing packages, and inconsistencies.
-        </p>
+        <div class="home-group">
+            <h2 class="home-group__title">🔗 Metadata Differences</h2>
+            <div class="home-group__links">
+                <a href="<?php echo Formatter::url('report-dependency-differences.php'); ?>" class="home-link">
+                    <span class="home-link__icon">🔗</span>
+                    <span class="home-link__text">
+                        <strong>Dependency differences</strong>
+                        <em>Packages with different deps per arch</em>
+                    </span>
+                </a>
+                <a href="<?php echo Formatter::url('report-provides-differences.php'); ?>" class="home-link">
+                    <span class="home-link__icon">📦</span>
+                    <span class="home-link__text">
+                        <strong>Provides differences</strong>
+                        <em>Different virtual packages provided</em>
+                    </span>
+                </a>
+                <a href="<?php echo Formatter::url('report-license-discrepancies.php'); ?>" class="home-link">
+                    <span class="home-link__icon">⚖️</span>
+                    <span class="home-link__text">
+                        <strong>License discrepancies</strong>
+                        <em><?php echo Formatter::number($stats['license_discrepancies_count']); ?> packages with license differences</em>
+                    </span>
+                </a>
+                <a href="<?php echo Formatter::url('report-circular-dependencies.php'); ?>" class="home-link">
+                    <span class="home-link__icon">🔁</span>
+                    <span class="home-link__text">
+                        <strong>Circular dependencies</strong>
+                        <em>Packages with circular dep chains</em>
+                    </span>
+                </a>
+            </div>
+        </div>
+
+        <div class="home-group">
+            <h2 class="home-group__title">📁 Package Listings</h2>
+            <div class="home-group__links">
+                <a href="<?php echo Formatter::url('report-packages-aarch64.php'); ?>" class="home-link">
+                    <span class="home-link__icon">🗂️</span>
+                    <span class="home-link__text">
+                        <strong>All <?php echo Formatter::escape($arch1); ?> packages</strong>
+                        <em><?php echo Formatter::number($stats['aarch64_packages']); ?> packages — sortable by size</em>
+                    </span>
+                </a>
+                <a href="<?php echo Formatter::url('report-packages-x86_64.php'); ?>" class="home-link">
+                    <span class="home-link__icon">🗂️</span>
+                    <span class="home-link__text">
+                        <strong>All <?php echo Formatter::escape($arch2); ?> packages</strong>
+                        <em><?php echo Formatter::number($stats['x86_64_packages']); ?> packages — sortable by size</em>
+                    </span>
+                </a>
+                <a href="<?php echo Formatter::url('report-repo-comparison.php'); ?>" class="home-link">
+                    <span class="home-link__icon">🏛️</span>
+                    <span class="home-link__text">
+                        <strong>Per-repository comparison</strong>
+                        <em>core / extra / forge breakdown</em>
+                    </span>
+                </a>
+                <a href="<?php echo Formatter::url('analysis.php'); ?>" class="home-link">
+                    <span class="home-link__icon">📈</span>
+                    <span class="home-link__text">
+                        <strong>Full analysis dashboard</strong>
+                        <em>All 23 reports with counts</em>
+                    </span>
+                </a>
+            </div>
+        </div>
+
     </div>
 </div>
 
 <?php Layout::footer();
+

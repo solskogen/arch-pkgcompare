@@ -1164,3 +1164,172 @@ footer {
         grid-template-columns: 1fr;
     }
 }
+
+/* ====================================================
+   Home / Landing page
+   ==================================================== */
+
+/* Hero */
+.home-hero {
+    background: linear-gradient(135deg, #1a2a4a 0%, #1e3a6e 100%);
+    border-bottom: 1px solid var(--border-color);
+    padding: 56px 0 48px;
+    margin-bottom: 40px;
+    text-align: center;
+}
+.home-hero__title {
+    font-size: 2.2rem;
+    font-weight: 700;
+    margin-bottom: 12px;
+    color: #fff;
+}
+.home-hero__subtitle {
+    font-size: 1.05rem;
+    color: #aac4e8;
+    margin-bottom: 8px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    font-weight: 500;
+}
+.home-hero__updated {
+    font-size: 0.82rem;
+    color: #7a9fc4;
+    margin-bottom: 28px;
+}
+.home-hero__actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+/* Buttons */
+.btn {
+    display: inline-block;
+    padding: 11px 26px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 0.95rem;
+    text-decoration: none;
+    transition: var(--transition);
+}
+.btn-primary {
+    background: var(--accent-color);
+    color: #fff;
+    border: 2px solid var(--accent-color);
+}
+.btn-primary:hover { background: var(--accent-light); border-color: var(--accent-light); }
+.btn-secondary {
+    background: transparent;
+    color: #aac4e8;
+    border: 2px solid #3a5a82;
+}
+.btn-secondary:hover { border-color: var(--accent-color); color: #fff; }
+
+/* Stats row */
+.home-stats {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 12px;
+    margin-bottom: 40px;
+}
+.home-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px 12px 16px;
+    background: var(--primary-color);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    text-decoration: none;
+    transition: var(--transition);
+}
+.home-stat:hover { border-color: var(--accent-color); background: var(--primary-light); }
+.home-stat--warn:hover { border-color: var(--warning-color); }
+.home-stat--info:hover { border-color: #51cf66; }
+.home-stat__value {
+    font-size: 1.9rem;
+    font-weight: 700;
+    color: #fff;
+    line-height: 1;
+    margin-bottom: 6px;
+}
+.home-stat--warn .home-stat__value { color: #ffc107; }
+.home-stat--info .home-stat__value  { color: #51cf66; }
+.home-stat__label {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    text-align: center;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+/* Report group grid */
+.home-groups {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 24px;
+    margin-bottom: 48px;
+}
+.home-group {
+    background: var(--primary-color);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 24px;
+}
+.home-group__title {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--accent-color);
+    margin-bottom: 16px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border-color);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.home-group__links {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.home-link {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px;
+    border-radius: 6px;
+    text-decoration: none;
+    transition: var(--transition);
+}
+.home-link:hover { background: var(--primary-lighter); }
+.home-link__icon {
+    font-size: 1.25rem;
+    flex-shrink: 0;
+    width: 28px;
+    text-align: center;
+}
+.home-link__text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.home-link__text strong {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: #d0e4ff;
+}
+.home-link__text em {
+    font-size: 0.76rem;
+    color: var(--text-secondary);
+    font-style: normal;
+}
+
+/* Responsive */
+@media (max-width: 900px) {
+    .home-stats  { grid-template-columns: repeat(3, 1fr); }
+    .home-groups { grid-template-columns: 1fr; }
+}
+@media (max-width: 540px) {
+    .home-hero__title { font-size: 1.5rem; }
+    .home-stats { grid-template-columns: repeat(2, 1fr); }
+}
