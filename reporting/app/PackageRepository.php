@@ -433,8 +433,43 @@ class PackageRepository {
     }
 
     /**
-     * Get packages only in a specific repo on x86_64 (not in same repo on aarch64)
+     * Get packages only in a specific repo on aarch64 (not present in x86_64 at all)
      */
+    public function getRepoAarch64Only(string $repoName) {
+        $repoName = $this->db->escape($repoName);
+        $sql = "
+            SELECT p.name, p.version, r.name as repo
+            FROM packages p
+            JOIN repositories r ON p.repo_id = r.id
+            WHERE p.system_arch = '{$this->primaryArch}'
+            AND r.name = '$repoName'
+            AND p.name NOT IN (
+                SELECT DISTINCT name FROM packages WHERE system_arch = '{$this->referenceArch}'
+            )
+            ORDER BY p.name
+        ";
+        return $this->db->fetchAll($sql);
+    }
+
+    /**
+     * Get packages only in a specific repo on x86_64 (not present in aarch64 at all)
+     */
+    public function getRepoX86_64Only(string $repoName) {
+        $repoName = $this->db->escape($repoName);
+        $sql = "
+            SELECT p.name, p.version, r.name as repo
+            FROM packages p
+            JOIN repositories r ON p.repo_id = r.id
+            WHERE p.system_arch = '{$this->referenceArch}'
+            AND r.name = '$repoName'
+            AND p.name NOT IN (
+                SELECT DISTINCT name FROM packages WHERE system_arch = '{$this->primaryArch}'
+            )
+            ORDER BY p.name
+        ";
+        return $this->db->fetchAll($sql);
+    }
+
     /**
      * Get dashboard statistics
      */
