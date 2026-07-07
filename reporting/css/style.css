@@ -255,3 +255,47 @@ td.sort-col { background: rgba(59,130,246,.04); }
     .nav-links a { font-size: 0.82rem; }
     .stats-grid { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ── Report header (title + view toggle) ─────────────── */
+.report-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 20px;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+.report-view-toggle { display: flex; gap: 8px; flex-shrink: 0; }
+.view-btn {
+    padding: 7px 16px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface2);
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: var(--trans);
+}
+.view-btn:hover { border-color: var(--accent); color: var(--text); }
+.view-btn--active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* ── Pkgbase list ─────────────────────────────────────── */
+.pkgbase-list { display: flex; flex-direction: column; gap: 12px; }
+.pkgbase-item {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 16px;
+    background: var(--surface2);
+}
+.pkgbase-item__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+.pkgbase-item__name { font-weight: 600; font-size: 0.95rem; display: flex; align-items: center; gap: 8px; }
+.pkgbase-item__count { font-size: 0.8rem; color: var(--text-dim); white-space: nowrap; }
+.pkgbase-item__table { width: 100%; font-size: 0.84rem; }
+.pkgbase-item__table td { padding: 5px 10px 5px 0; border-top: 1px solid #222; }
+.pkgbase-item__table tr:first-child td { border-top: none; }
