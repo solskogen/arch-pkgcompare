@@ -471,6 +471,40 @@ class PackageRepository {
     }
 
     /**
+     * Get packages only in a specific repo on x86_64, grouped by pkgbase
+     */
+    public function getRepoX86_64OnlyGroupedByPkgbase(string $repoName) {
+        $repoName = $this->db->escape($repoName);
+        $packages = $this->db->fetchAll("
+            SELECT p.name, p.version, r.name as repo, p.base as pkgbase
+            FROM packages p
+            JOIN repositories r ON p.repo_id = r.id
+            WHERE p.system_arch = '{$this->referenceArch}'
+            AND r.name = '$repoName'
+            AND p.name NOT IN (
+                SELECT DISTINCT name FROM packages WHERE system_arch = '{$this->primaryArch}'
+            )
+            ORDER BY p.base, p.name
+        ");
+
+        $grouped = [];
+        foreach ($packages as $pkg) {
+            $base = $pkg['pkgbase'] ?: $pkg['name'];
+            if (!isset($grouped[$base])) {
+                $grouped[$base] = ['packages' => [], 'has_primary' => false];
+            }
+            $grouped[$base]['packages'][] = $pkg;
+        }
+        foreach (array_keys($grouped) as $base) {
+            $result = $this->db->fetchOne(
+                "SELECT COUNT(*) as cnt FROM packages WHERE base = '" . $this->db->escape($base) . "' AND system_arch = '{$this->primaryArch}'"
+            );
+            $grouped[$base]['has_primary'] = ($result['cnt'] > 0);
+        }
+        return $grouped;
+    }
+
+    /**
      * Get dashboard statistics
      */
     public function getStats() {
