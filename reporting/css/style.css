@@ -296,6 +296,9 @@ td.sort-col { background: rgba(59,130,246,.04); }
 }
 .pkgbase-item__name { font-weight: 600; font-size: 0.95rem; display: flex; align-items: center; gap: 8px; }
 .pkgbase-item__count { font-size: 0.8rem; color: var(--text-dim); white-space: nowrap; }
-.pkgbase-item__table { width: 100%; font-size: 0.84rem; }
-.pkgbase-item__table td { padding: 5px 10px 5px 0; border-top: 1px solid #222; }
+.pkgbase-item__table { width: 100%; font-size: 0.84rem; table-layout: fixed; }
+.pkgbase-item__table td { padding: 5px 10px 5px 0; border-top: 1px solid #222; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pkgbase-item__table tr:first-child td { border-top: none; }
+.pkgbase-item__table td:nth-child(1) { width: 55%; }
+.pkgbase-item__table td:nth-child(2) { width: 30%; }
+.pkgbase-item__table td:nth-child(3) { width: 15%; }
