@@ -77,17 +77,15 @@ Layout::header('x86_64 Only Packages');
                             </div>
                             <span class="pkgbase-item__count"><?php echo count($info['packages']); ?> package<?php echo count($info['packages']) === 1 ? '' : 's'; ?></span>
                         </div>
-                        <table class="pkgbase-item__table">
-                            <tbody>
-                                <?php foreach ($info['packages'] as $pkg): ?>
-                                <tr>
-                                    <td><a href="<?php echo Formatter::url('package-detail.php', ['name' => $pkg['name']]); ?>"><?php echo Formatter::escape($pkg['name']); ?></a></td>
-                                    <td class="text-muted text-small"><?php echo Formatter::escape($pkg['version']); ?></td>
-                                    <td class="text-muted text-small"><?php echo Formatter::escape($pkg['repo']); ?></td>
-                                </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
+                        <div class="pkgbase-item__packages">
+                            <?php foreach ($info['packages'] as $pkg): ?>
+                            <div class="pkgbase-pkg">
+                                <a class="pkgbase-pkg__name" href="<?php echo Formatter::url('package-detail.php', ['name' => $pkg['name']]); ?>"><?php echo Formatter::escape($pkg['name']); ?></a>
+                                <span class="pkgbase-pkg__version"><?php echo Formatter::escape($pkg['version']); ?></span>
+                                <span class="pkgbase-pkg__repo"><?php echo Formatter::escape($pkg['repo']); ?></span>
+                            </div>
+                            <?php endforeach; ?>
+                        </div>
                     </div>
                     <?php endforeach; ?>
                 </div>

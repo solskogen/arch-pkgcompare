@@ -302,3 +302,15 @@ td.sort-col { background: rgba(59,130,246,.04); }
 .pkgbase-item__table td:nth-child(1) { width: 55%; }
 .pkgbase-item__table td:nth-child(2) { width: 30%; }
 .pkgbase-item__table td:nth-child(3) { width: 15%; }
+/* Package rows inside a pkgbase card */
+.pkgbase-item__packages { margin-top: 4px; }
+.pkgbase-pkg {
+    display: flex; align-items: baseline; gap: 12px;
+    padding: 5px 0;
+    border-top: 1px solid #1e1e1e;
+    font-size: 0.84rem;
+}
+.pkgbase-item__packages .pkgbase-pkg:first-child { border-top: none; }
+.pkgbase-pkg__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pkgbase-pkg__version { flex-shrink: 0; color: var(--text-dim); font-size: 0.8rem; min-width: 120px; }
+.pkgbase-pkg__repo { flex-shrink: 0; color: var(--text-dim); font-size: 0.78rem; min-width: 50px; text-align: right; }
